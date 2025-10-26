@@ -1,0 +1,17 @@
+# Core
+streamlit>=1.38.0
+toml>=0.10.2
+
+# Streamlit 拡張（Cookie 認証用）
+extra-streamlit-components>=0.1.71
+
+# JSON / Pathlib / OS は標準ライブラリなので不要
+
+# OpenAI API を使うアプリ側で共通利用（jwt_utils, openai_client等）
+openai>=1.40.0
+
+# JWT トークン検証に必要（jwt_utilsで利用）
+PyJWT>=2.9.0
+
+# CLIテスト・開発用（任意）
+argparse; python_version >= "3.8"

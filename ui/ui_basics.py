@@ -11,6 +11,15 @@ Streamlit UI 補助関数（共通コンポーネント）
 
 使用例
 ------
+
+import sys
+from pathlib import Path
+
+# projects/ を import パスに追加（pages → app → project → projects）
+PROJECTS_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECTS_ROOT))
+    
 from lib.ui_utils import thick_divider
 
 thick_divider("#007ACC", 4)
