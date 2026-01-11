@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# common_lib/inbox_ingest/ingest.py
+# common_lib/inbox_ops/ingest.py
 #
 # ✅ 他アプリ → Inbox 保存（正本API）
 # - common_lib だけに依存（auth_portal_app の lib/ に依存しない）

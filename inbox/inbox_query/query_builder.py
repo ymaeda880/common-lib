@@ -1,5 +1,110 @@
 # -*- coding: utf-8 -*-
-# common_lib/inbox_ingest/query_builder.py
+# common_lib/inbox/inbox_query/query_builder.py
+
+
+"""
+Inbox 検索クエリ用 WHERE 句ビルダー
+
+このモジュールは、Inbox（inbox_items）検索画面で指定された
+各種フィルタ条件（種別・タグ・名前・格納日・サイズ・最終閲覧）
+をもとに、
+
+- WHERE 句の SQL 断片（"it.kind IN (...) AND ..."）
+- 対応するプレースホルダ引数（params）
+
+を生成するための補助関数群を提供する。
+
+設計方針
+--------
+- SQL 文の組み立ては *exec 側* が責務を持つ
+  （本モジュールは WHERE 句と params だけを返す）
+- 条件が未指定の場合は「絞らない」
+- UI 側での入力検証（警告表示など）を前提とし、
+  ここでは *機械的に* SQL 条件へ変換する
+- JST（UTC+9）を前提に日付条件を ISO 文字列へ変換する
+
+前提となる SQL 構造
+-------------------
+query_exec 側では、以下のような FROM / JOIN を前提とする。
+
+    FROM inbox_items AS it
+    LEFT JOIN lvdb.last_viewed AS lv
+           ON lv.item_id = it.item_id
+
+- inbox_items は `it` エイリアス
+- last_viewed は `lv` エイリアス
+- 未閲覧判定は `lv.item_id IS NULL` で行う
+
+主な利用関数
+------------
+build_where_and_params(...)
+
+    where_sql, params = build_where_and_params(
+        kinds_checked=[...],
+        tag_terms=[...],
+        name_terms=[...],
+        added_from=date | None,
+        added_to=date | None,
+        size_mode="以上" | "以下" | "範囲",
+        size_min_bytes=int | None,
+        size_max_bytes=int | None,
+        lv_mode="未閲覧のみ" | "期間指定" | "最近" | "",
+        lv_from=date | None,
+        lv_to=date | None,
+        lv_since_iso=str | None,
+    )
+
+戻り値
+------
+where_sql : str
+    WHERE 句の中身のみを返す（先頭の "WHERE" は含まない）
+
+    例:
+        "it.kind IN (?, ?) AND it.original_name LIKE ? AND lv.item_id IS NULL"
+
+params : list[Any]
+    where_sql 内の `?` に対応する値を、順序通りに並べた配列
+
+    例:
+        ["pdf", "image", "%report%"]
+
+呼び出し側での典型的な使い方
+----------------------------
+    where_sql, params = build_where_and_params(...)
+
+    sql = (
+        "SELECT it.* "
+        "FROM inbox_items AS it "
+        "LEFT JOIN lvdb.last_viewed AS lv ON lv.item_id = it.item_id "
+    )
+    if where_sql:
+        sql += " WHERE " + where_sql
+
+    cur.execute(sql, params)
+
+補助関数について
+----------------
+- norm_text(s)
+    検索語の正規化（NFKC・空白正規化）
+
+- split_terms_and(s)
+    AND 検索用の語分解
+    空白・カンマ・スラッシュ（/／）を区切りとして分割
+
+- parse_recent(s)
+    「3日」「12h」「30分」などの表記を timedelta に変換
+
+- date_to_iso_start / date_to_iso_end_exclusive
+    date → JST ISO 文字列（[start, end) 形式）
+
+注意点
+------
+- タグ検索は tags_json に対する LIKE 検索（現行仕様）
+- last_viewed 条件は *必ず LEFT JOIN が存在すること*
+- 本モジュールは SQL を実行しない（純粋なクエリ構築専用）
+"""
+
+
 from __future__ import annotations
 
 import re
@@ -19,27 +124,6 @@ def norm_text(s: str) -> str:
     s = s.strip()
     s = _WS_RE.sub(" ", s)
     return s
-
-
-# def split_terms_and(s: str) -> List[str]:
-#     s = norm_text(s)
-#     if not s:
-#         return []
-#     s = s.replace("，", ",")
-#     parts: List[str] = []
-#     for chunk in s.split(","):
-#         chunk = chunk.strip()
-#         if not chunk:
-#             continue
-#         parts.extend([p for p in chunk.split(" ") if p])
-
-#     seen = set()
-#     out: List[str] = []
-#     for p in parts:
-#         if p not in seen:
-#             seen.add(p)
-#             out.append(p)
-#     return out
 
 
 def split_terms_and(s: str) -> list[str]:

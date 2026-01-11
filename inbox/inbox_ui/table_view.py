@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# lib/inbox_search/table_view.py
+# common_lib/inbox/inbox_ui/table_view.py
 from __future__ import annotations
 
 from typing import Any

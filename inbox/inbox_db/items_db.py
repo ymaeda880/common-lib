@@ -1,5 +1,120 @@
 # -*- coding: utf-8 -*-
-# common_lib/inbox_ingest/items_db.py
+# common_lib/inbox_db/items_db.py
+
+
+"""
+inbox_items 正本DB 管理モジュール
+
+Inbox に格納される全アイテム（PDF / 画像 / Word / Excel / Text 等）の
+メタデータを管理するための正本データベース
+`inbox_items.db` を扱う唯一の共通ライブラリ。
+
+本モジュールは以下を強く保証する：
+
+- inbox_items.db のスキーマ定義・進化（migration）の正本はここ
+- ページ側（20 / 21 / 22 / 35 ...）に DDL を散らさない
+- すべての CRUD は ensure_items_db を経由する
+- 古い DB が存在しても「壊さず」「追加列で吸収」する
+
+設計方針（確定）
+----------------
+- inbox_items.db は「正本DB」
+- スキーマ変更は ALTER TABLE ADD COLUMN による後方互換方式
+- 既存列の削除・型変更は行わない
+- migration ロジックは ensure_items_db に集約する
+
+これにより、
+- 古い端末・古い DB を持つユーザーでも即座に動作する
+- DB 初期化漏れによる page 側エラーを防ぐ
+- schema の所在が常に一箇所に固定される
+
+DB スキーマ概要
+---------------
+テーブル：
+    inbox_items
+
+主キー：
+    item_id TEXT PRIMARY KEY
+
+主要列：
+    kind            TEXT    # 種別（pdf / image / word / excel / text ...）
+    stored_rel      TEXT    # ストレージ内の相対パス
+    original_name   TEXT    # 元ファイル名
+    added_at        TEXT    # 格納日時（ISO文字列）
+    size_bytes      INTEGER # ファイルサイズ
+    note            TEXT    # ユーザー用メモ
+    tags_json       TEXT    # タグ（JSON配列文字列）
+    thumb_rel       TEXT    # サムネイル相対パス
+    thumb_status    TEXT    # none / done / error
+    thumb_error     TEXT    # エラー内容（短縮）
+
+送付・コピー由来情報：
+    origin_user     TEXT    # 元のユーザー sub
+    origin_item_id  TEXT    # 元 item_id
+    origin_type     TEXT    # 送付種別
+
+スキーマ保証関数
+----------------
+ensure_items_db(items_db)
+
+    - DB / ディレクトリが無ければ作成
+    - テーブルが無ければ作成
+    - 既存 DB に不足列があれば ALTER TABLE ADD COLUMN
+    - index を最低限保証
+
+    ※ inbox_items.db を触るすべての関数が内部で必ず呼ぶ。
+
+insert / read / update / delete API
+-----------------------------------
+insert_item(...)
+    inbox_items への INSERT 正本。
+    - 通常アップロード：origin_* は空文字
+    - 送付コピー：origin_* を明示的に指定
+
+fetch_item_by_id(...)
+    item_id で 1 件取得（dict 形式）
+
+load_items_df(...)
+    全件を DataFrame で取得（added_at DESC）
+
+count_items(...)
+    WHERE 条件付き件数取得
+    - where_sql は "WHERE ..." を含む前提
+
+load_items_page(...)
+    ページング取得（LIMIT / OFFSET）
+    - where_sql / order_sql を外部から注入
+
+update_item_tag_single(...)
+    単一タグ運用用の簡易更新
+    - tags_json は常に JSON 配列文字列で保存
+
+update_item_note(...)
+    note 列の更新
+
+update_thumb(...)
+    サムネイル生成結果の反映
+    - error は最大 500 文字に切り詰める
+
+delete_item_row(...)
+    inbox_items から 1 行削除
+    ※ 実ファイル削除は別レイヤの責務
+
+責務分離の考え方
+----------------
+- 本モジュール：DB の正当性・一貫性
+- query_builder / query_exec：検索条件・JOIN・表示用整形
+- pages：UI / ユーザー操作
+- 実ファイル操作（削除・コピー）：storage / ops 側
+
+注意事項
+--------
+- tags_json は JSON 配列文字列として扱う（LIKE 検索前提）
+- 日時はすべて ISO 文字列で保持（timezone 解釈は上位層）
+- 本モジュールは UI や権限制御を一切持たない
+"""
+
+
 
 from __future__ import annotations
 

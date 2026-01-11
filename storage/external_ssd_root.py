@@ -1,3 +1,4 @@
+# common_lib/storage/external_ssd_root.py
 from __future__ import annotations
 
 from pathlib import Path
