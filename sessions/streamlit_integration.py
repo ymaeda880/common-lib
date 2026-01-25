@@ -21,21 +21,18 @@ def get_or_create_session_id(key: str = "prec_session_id") -> str:
     st.session_state[key] = sid
     return sid
 
-
 def init_session(
     *,
     db_path: Path,
     cfg: SessionConfig,
     user_sub: str,
     app_name: str,
+    page_name: str | None = None,
     session_state_key: str = "prec_session_id",
     init_flag_key: str = "prec_session_inited",
 ) -> str:
     """
     初回のみ「login 相当」を記録する。
-
-    - Streamlit は rerun が多いので、st.session_state のフラグで 1回だけ実行
-    - session_id は 1タブ（Streamlitセッション）単位
     """
     session_id = get_or_create_session_id(session_state_key)
 
@@ -49,12 +46,12 @@ def init_session(
         user_sub=user_sub,
         session_id=session_id,
         app_name=app_name,
+        page_name=page_name,
         user_agent=None,
         client_ip=None,
     )
     st.session_state[init_flag_key] = True
     return session_id
-
 
 def heartbeat_tick(
     *,
@@ -62,6 +59,7 @@ def heartbeat_tick(
     cfg: SessionConfig,
     user_sub: str,
     app_name: str,
+    page_name: str | None = None,
     session_state_key: str = "prec_session_id",
     last_hb_key: str = "prec_last_hb_ts",
 ) -> str:
@@ -78,10 +76,9 @@ def heartbeat_tick(
             user_sub=user_sub,
             session_id=session_id,
             app_name=app_name,
+            page_name=page_name,
         )
         st.session_state[last_hb_key] = now
 
-    # 1分バケットのサンプル更新（同一分はDB側で二重計上しない）
     maybe_sample_minute(db_path=db_path, cfg=cfg, app_name=app_name)
-
     return session_id

@@ -11,7 +11,31 @@ from common_lib.env.config import (
     read_toml_required,
 )
 
-Role = Literal["main", "backup"]
+Role = Literal["main", "backup", "backup2"]
+
+
+def _normalize_subdir_name(subdir: str) -> str:
+    """
+    論理名（Storages / InBoxStorages / Archive）
+    → 実体フォルダ名（過去互換：小文字）
+    """
+    key = subdir.strip().lower()
+    mapping = {
+        "storages": "storages",
+        "inboxstorages": "inbox",
+        "archive": "archive",
+    }
+    if key not in mapping:
+        st.error(f"未知の subdir です：{subdir}")
+        st.stop()
+    return mapping[key]
+
+
+# ============================================================
+# backup 判定ヘルパー
+# ============================================================
+def _is_backup_role(role: Role) -> bool:
+    return role != "main"
 
 
 # ============================================================
@@ -38,9 +62,17 @@ def _command_station_storage_toml_path(projects_root: Path) -> Path:
 
 
 # ============================================================
-# storage_policy.mode の取得（internal / external のみ）
+# main mode の取得（subdir 別：storages / inbox / archive）
 # ============================================================
-def _get_storage_policy_mode(projects_root: Path) -> str:
+def _main_mode_from_secrets(projects_root: Path, *, subdir: str) -> str:
+    """
+    main の internal/external を secrets.toml から subdir 別に取得する。
+
+    正本:
+      - Storages      -> [storages].mode
+      - InBoxStorages -> [inbox].mode
+      - Archive       -> [archive].mode
+    """
     p = _command_station_secrets_path(projects_root)
     if not p.exists():
         st.error(f"command_station の secrets.toml が見つかりません：\n{p}")
@@ -48,21 +80,38 @@ def _get_storage_policy_mode(projects_root: Path) -> str:
 
     data = read_toml_required(p)
 
-    tbl = data.get("storage_policy")
+    key_map = {
+        "storages": "storages",
+        "inboxstorages": "inbox",
+        "archive": "archive",
+    }
+
+    k = key_map.get(str(subdir).strip().lower())
+    if k is None:
+        st.error(
+            "\n".join(
+                [
+                    "未知の subdir です（main mode を決められません）。",
+                    f"- subdir: {subdir}",
+                    "許可: Storages / InBoxStorages / Archive",
+                ]
+            )
+        )
+        st.stop()
+
+    tbl = data.get(k)
     if not isinstance(tbl, dict):
-        st.error(f"{p} の [storage_policy] が不正です")
+        st.error(f"{p} の [{k}] が不正です（テーブルではありません）")
         st.stop()
 
     mode = tbl.get("mode")
     if not isinstance(mode, str) or not mode.strip():
-        st.error(f"{p} の [storage_policy].mode が未設定です")
+        st.error(f"{p} の [{k}].mode が未設定です")
         st.stop()
 
     mode = mode.strip()
     if mode not in ("internal", "external"):
-        st.error(
-            f'{p} の [storage_policy].mode は "internal" または "external" を指定してください'
-        )
+        st.error(f'{p} の [{k}].mode は "internal" または "external" を指定してください')
         st.stop()
 
     return mode
@@ -79,6 +128,9 @@ def resolve_external_ssd_root(
     """
     外部SSDの「物理 root（/Volumes/...）」のみを解決して返す。
     """
+
+
+
     loc = get_location_from_command_station_secrets(projects_root)
 
     storage_toml = _command_station_storage_toml_path(projects_root)
@@ -89,22 +141,22 @@ def resolve_external_ssd_root(
     data = read_toml_required(storage_toml)
 
     try:
-        root = (
-            data["storage"]["external"][loc][role]["root"]
-        )
+        root = data["storage"]["external"][loc][role]["root"]
     except Exception:
         st.error(f"{storage_toml} に [storage.external.{loc}.{role}] がありません")
         st.stop()
 
     if not isinstance(root, str) or not root.strip():
-        st.error(
-            f"{storage_toml} の storage.external.{loc}.{role}.root が未設定です"
-        )
+        st.error(f"{storage_toml} の storage.external.{loc}.{role}.root が未設定です")
         st.stop()
 
     ssd_root = Path(root.strip())
 
     if not ssd_root.exists() or not ssd_root.is_dir():
+        # 未接続：backup 系では「存在しない Path」を返すだけ（UI 側で表示）
+        if role != "main":
+            return ssd_root
+        # main は従来どおりエラー停止
         st.error(
             "\n".join(
                 [
@@ -117,6 +169,7 @@ def resolve_external_ssd_root(
             )
         )
         st.stop()
+
 
     return ssd_root
 
@@ -131,16 +184,32 @@ def resolve_storage_subdir_root(
     role: Role = "main",
 ) -> Path:
     """
-    storage_policy.mode に従って subdir のルートを返す。
-
-    - internal : projects_root / subdir
-    - external : 外部SSD / subdir
+    role に従って subdir のルートを返す。
     """
-    mode = _get_storage_policy_mode(projects_root)
+
+    real_subdir = _normalize_subdir_name(subdir)
 
     # --------------------------------------------------------
-    # internal（内蔵ディスク）
+    # backup系は「常に external」を強制
     # --------------------------------------------------------
+    if _is_backup_role(role):
+        ssd_root = resolve_external_ssd_root(projects_root, role=role)
+        p = ssd_root / real_subdir
+
+        # backup 系は「未接続／未作成でも止めない」
+        if not p.exists() or not p.is_dir():
+            # Path は返す（UI 側で「未接続」「未作成」と表示させる）
+            return p
+
+        return p
+
+
+    # --------------------------------------------------------
+    # main は subdir 別の mode に従う
+    # --------------------------------------------------------
+    mode = _main_mode_from_secrets(projects_root, subdir=subdir)
+
+    # internal は論理名（subdir）をそのまま使う
     if mode == "internal":
         p = projects_root / subdir
         if not p.exists() or not p.is_dir():
@@ -156,18 +225,16 @@ def resolve_storage_subdir_root(
             st.stop()
         return p
 
-    # --------------------------------------------------------
-    # external（外部SSD）
-    # --------------------------------------------------------
-    ssd_root = resolve_external_ssd_root(projects_root, role=role)
-    p = ssd_root / subdir
+    # external（main）
+    ssd_root = resolve_external_ssd_root(projects_root, role="main")
+    p = ssd_root / real_subdir
 
     if not p.exists() or not p.is_dir():
         st.error(
             "\n".join(
                 [
-                    f"外部SSD上の {subdir} が見つかりません。",
-                    f"- role     : {role}",
+                    f"外部SSD上の {real_subdir} が見つかりません。",
+                    "- role     : main",
                     f"- 期待パス : {p}",
                     "外部SSDの構成（フォルダ）を確認してください（管理者対応）。",
                 ]

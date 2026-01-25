@@ -18,8 +18,18 @@
 - get_active_sessions(...)
 """
 
+# common_lib/sessions/__init__.py
+from __future__ import annotations
+
+# ---- 非Streamlitでも使えるもの（常に export）----
 from .config import SessionConfig
+from .db import ensure_db, scalar_int
 from .queries import get_active_counts, get_active_sessions
 
-# Streamlit integration
-from .streamlit_integration import init_session, heartbeat_tick
+# ---- Streamlit依存（streamlitがあるときだけ export）----
+try:
+    from .streamlit_integration import init_session, heartbeat_tick  # noqa: F401
+except ModuleNotFoundError:
+    # streamlit が無い環境（CLI/worker等）では import しない
+    init_session = None  # type: ignore
+    heartbeat_tick = None  # type: ignore

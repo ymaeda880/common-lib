@@ -179,28 +179,32 @@ def _safe_read_inbox_file_bytes(
 
 
 # ============================================================
-# UI：Inbox から選択→読み込み（他ページから呼ぶ公開関数）
+# UIコア：Inbox から選択→読み込み（toggle有無を切替）
 # ============================================================
-def render_inbox_file_picker(
+def _render_inbox_file_picker_core(
     *,
     projects_root: Path,
     user_sub: str,
     key_prefix: str,
     # ----------------------------
+    # toggle 制御
+    # ----------------------------
+    enable_toggle: bool,
+    toggle_label: str,
+    toggle_default: bool,
+    # ----------------------------
     # 表示・操作パラメータ
     # ----------------------------
-    toggle_label: str = "📥 Inboxから読み込む",
-    toggle_default: bool = False,
-    page_size: int = 10,
+    page_size: int,
     # ----------------------------
     # kind 絞り込み（None で全件）
     # ----------------------------
-    kinds: Optional[Sequence[str]] = None,
+    kinds: Optional[Sequence[str]],
     # ----------------------------
     # 表示ラベル設定
     # ----------------------------
-    show_kind_in_label: bool = True,
-    show_added_at_in_label: bool = False,
+    show_kind_in_label: bool,
+    show_added_at_in_label: bool,
 ) -> Optional[InboxPickedFile]:
     """
     戻り値：
@@ -214,11 +218,12 @@ def render_inbox_file_picker(
     inbox_root = resolve_inbox_root(projects_root)
 
     # ============================================================
-    # 1) トグル（OFFなら何もしない）
+    # 1) toggle（enable_toggle=True のときだけ描画）
     # ============================================================
-    use_inbox = st.toggle(toggle_label, value=toggle_default, key=f"{key_prefix}_toggle")
-    if not use_inbox:
-        return None
+    if enable_toggle:
+        use_inbox = st.toggle(toggle_label, value=toggle_default, key=f"{key_prefix}_toggle")
+        if not use_inbox:
+            return None
 
     # ============================================================
     # 2) Inbox ルート存在確認（落とさず案内のみ）
@@ -293,7 +298,8 @@ def render_inbox_file_picker(
         end = min(offset + int(page_size), total)
         st.caption(f"件数: {total} ／ ページ: {page_index + 1}/{last_page + 1}（{start}–{end}）")
     with nav4:
-        st.caption("※ ページ移動時は選択がクリアされます（事故防止）")
+        #st.caption("※ ページ移動時は選択がクリアされます（事故防止）")
+        pass
 
     # ============================================================
     # 7) UI：選択（radio：未選択OK）
@@ -331,7 +337,8 @@ def render_inbox_file_picker(
     with cbtn1:
         load_clicked = st.button("📥 選択ファイルを読み込む", key=f"{key_prefix}_load")
     with cbtn2:
-        st.caption("※ 押した時点で stored_rel を解決し、bytes を読み込んで返します。")
+        #st.caption("※ 押した時点で stored_rel を解決し、bytes を読み込んで返します。")
+        pass
 
     if not load_clicked:
         return None
@@ -365,7 +372,7 @@ def render_inbox_file_picker(
             user_sub=user_sub,
             stored_rel=str(picked_row.get("stored_rel") or ""),
         )
-        st.success("Inbox から読み込みました。")
+        st.caption("Inbox から読み込みました。")
 
         return InboxPickedFile(
             data_bytes=data,
@@ -379,3 +386,78 @@ def render_inbox_file_picker(
     except Exception as e:
         st.error(f"Inbox ファイルの読み込みに失敗しました: {e}")
         return None
+
+
+# ============================================================
+# UI：Inbox から選択→読み込み（公開関数：トグルあり）
+# ============================================================
+def render_inbox_file_picker(
+    *,
+    projects_root: Path,
+    user_sub: str,
+    key_prefix: str,
+    # ----------------------------
+    # 表示・操作パラメータ
+    # ----------------------------
+    toggle_label: str = "📥 Inboxから読み込む",
+    toggle_default: bool = False,
+    page_size: int = 10,
+    # ----------------------------
+    # kind 絞り込み（None で全件）
+    # ----------------------------
+    kinds: Optional[Sequence[str]] = None,
+    # ----------------------------
+    # 表示ラベル設定
+    # ----------------------------
+    show_kind_in_label: bool = True,
+    show_added_at_in_label: bool = False,
+) -> Optional[InboxPickedFile]:
+    """
+    戻り値：
+      - 読み込み確定＆成功：InboxPickedFile
+      - それ以外：None（未操作/未選択/失敗）
+    """
+    return _render_inbox_file_picker_core(
+        projects_root=projects_root,
+        user_sub=user_sub,
+        key_prefix=key_prefix,
+        enable_toggle=True,
+        toggle_label=toggle_label,
+        toggle_default=toggle_default,
+        page_size=page_size,
+        kinds=kinds,
+        show_kind_in_label=show_kind_in_label,
+        show_added_at_in_label=show_added_at_in_label,
+    )
+
+
+# ============================================================
+# UI：Inbox から選択→読み込み（公開関数：トグルなし）
+# ============================================================
+def render_inbox_file_picker_no_toggle(
+    *,
+    projects_root: Path,
+    user_sub: str,
+    key_prefix: str,
+    page_size: int = 10,
+    kinds: Optional[Sequence[str]] = None,
+    show_kind_in_label: bool = True,
+    show_added_at_in_label: bool = False,
+) -> Optional[InboxPickedFile]:
+    """
+    トグル無し版：
+      - 「タブの中に置く」等、トグルが不要なUIで使う
+      - 中身（ページング/選択/読み込み）は常に表示
+    """
+    return _render_inbox_file_picker_core(
+        projects_root=projects_root,
+        user_sub=user_sub,
+        key_prefix=key_prefix,
+        enable_toggle=False,
+        toggle_label="",
+        toggle_default=True,
+        page_size=page_size,
+        kinds=kinds,
+        show_kind_in_label=show_kind_in_label,
+        show_added_at_in_label=show_added_at_in_label,
+    )

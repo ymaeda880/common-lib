@@ -1,5 +1,5 @@
 """
-common_lib/ui/ui_utils.py
+common_lib/ui/ui_basics.py
 ==========================================
 Streamlit UI 補助関数（共通コンポーネント）
 
@@ -75,3 +75,40 @@ def thick_divider(color: str = "Gray", height: int = 3, margin: str = "1.5em 0")
         """,
         unsafe_allow_html=True,
     )
+
+
+def subtitle(
+    text: str,
+    *,
+    font_size: str = "1.05rem",
+    font_weight: int = 600,
+    color: str = "#444",
+    border_color: str = "#ddd",
+    margin_top: str = "-6px",
+    margin_bottom: str = "6px",
+) -> None:
+    """
+    ページ用サブタイトルを表示する（title の直下想定）。
+
+    Parameters
+    ----------
+    text : str
+        表示するサブタイトル文字列
+    """
+    st.markdown(
+        f"""
+        <div style="
+            font-size:{font_size};
+            font-weight:{font_weight};
+            color:{color};
+            border-left:4px solid {border_color};
+            padding-left:8px;
+            margin-top:{margin_top};
+            margin-bottom:{margin_bottom};
+        ">
+            {text}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption("")

@@ -296,15 +296,16 @@ def require_admin_user(
 # デバッグ
 # ============================================================
 def _debug_print_access_config(prefix: str = "[auth_debug]") -> None:
-    p = _resolve_settings_path()
-    admins = sorted(get_admin_users())
-    info = {
-        "settings_path": str(p) if p else None,
-        "admin_users": admins,
-        "cookie_name": COOKIE_NAME,
-        "cm_key": CM_KEY,
-    }
-    print(f"{prefix} {json.dumps(info, ensure_ascii=False)}")
+    # p = _resolve_settings_path()
+    # admins = sorted(get_admin_users())
+    # info = {
+    #     "settings_path": str(p) if p else None,
+    #     "admin_users": admins,
+    #     "cookie_name": COOKIE_NAME,
+    #     "cm_key": CM_KEY,
+    # }
+    # print(f"{prefix} {json.dumps(info, ensure_ascii=False)}")
+    return
 
 
 def debug_dump_admins() -> None:

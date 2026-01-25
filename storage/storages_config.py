@@ -2,12 +2,31 @@
 from __future__ import annotations
 
 from pathlib import Path
-import streamlit as st
+
+try:
+    import streamlit as st  # type: ignore
+except ModuleNotFoundError:
+    st = None  # CLI / worker 等 streamlit 無し環境向け
 
 from common_lib.env.config import (
     get_location_from_command_station_secrets,
     read_toml_required,
 )
+
+# ============================================================
+# Streamlit あり/なし両対応：エラー表示＋停止
+# ============================================================
+def _error_stop_or_raise(msg: str) -> None:
+    """
+    Streamlit 実行時は st.error + st.stop。
+    streamlit が無い環境では RuntimeError で停止。
+    """
+    if st is not None:
+        st.error(msg)
+        st.stop()
+        return
+    raise RuntimeError(msg)
+
 
 # ============================================================
 # internal Storages の固定仕様
@@ -53,27 +72,23 @@ def get_storages_mode_from_command_station_secrets(projects_root: Path) -> str:
     p = _command_station_secrets_path(projects_root)
 
     if not p.exists():
-        st.error(f"command_station の secrets.toml が見つかりません：\n{p}")
-        st.stop()
+        _error_stop_or_raise(f"command_station の secrets.toml が見つかりません：\n{p}")
 
     data = read_toml_required(p)
 
     tbl = data.get("storages")
     if not isinstance(tbl, dict):
-        st.error(f"{p} の [storages] が不正です（テーブルではありません）")
-        st.stop()
+        _error_stop_or_raise(f"{p} の [storages] が不正です（テーブルではありません）")
 
     mode = tbl.get("mode")
     if not isinstance(mode, str) or not mode.strip():
-        st.error(f"{p} の [storages].mode が未設定です")
-        st.stop()
+        _error_stop_or_raise(f"{p} の [storages].mode が未設定です")
 
     mode = mode.strip()
     if mode not in ("internal", "external"):
-        st.error(
+        _error_stop_or_raise(
             f'{p} の [storages].mode は "internal" または "external" を指定してください'
         )
-        st.stop()
 
     return mode
 
@@ -102,8 +117,7 @@ def resolve_storages_root(projects_root: Path) -> Path:
         storages_root = projects_root / _INTERNAL_STORAGES_DIRNAME
 
         if not storages_root.exists() or not storages_root.is_dir():
-            st.error(f"内部 Storages が存在しません: {storages_root}")
-            st.stop()
+            _error_stop_or_raise(f"内部 Storages が存在しません: {storages_root}")
 
         return storages_root
 
@@ -114,41 +128,39 @@ def resolve_storages_root(projects_root: Path) -> Path:
 
     storage_toml = _command_station_storage_toml_path(projects_root)
     if not storage_toml.exists():
-        st.error(f"command_station の storage.toml が見つかりません：\n{storage_toml}")
-        st.stop()
+        _error_stop_or_raise(
+            f"command_station の storage.toml が見つかりません：\n{storage_toml}"
+        )
 
     data = read_toml_required(storage_toml)
 
     # [storages.storage.external.<location>].root を読む
     tbl = data.get("storages")
     if not isinstance(tbl, dict):
-        st.error(f"{storage_toml} の [storages] が不正です")
-        st.stop()
+        _error_stop_or_raise(f"{storage_toml} の [storages] が不正です")
 
     storage_tbl = tbl.get("storage")
     if not isinstance(storage_tbl, dict):
-        st.error(f"{storage_toml} の [storages.storage] が不正です")
-        st.stop()
+        _error_stop_or_raise(f"{storage_toml} の [storages.storage] が不正です")
 
     external_tbl = storage_tbl.get("external")
     if not isinstance(external_tbl, dict):
-        st.error(f"{storage_toml} の [storages.storage.external] が不正です")
-        st.stop()
+        _error_stop_or_raise(f"{storage_toml} の [storages.storage.external] が不正です")
 
     loc_tbl = external_tbl.get(loc)
     if not isinstance(loc_tbl, dict):
-        st.error(f"{storage_toml} に [storages.storage.external.{loc}] がありません")
-        st.stop()
+        _error_stop_or_raise(f"{storage_toml} に [storages.storage.external.{loc}] がありません")
 
     root = loc_tbl.get("root")
     if not isinstance(root, str) or not root.strip():
-        st.error(f"{storage_toml} の storages.storage.external.{loc}.root が未設定です")
-        st.stop()
+        _error_stop_or_raise(
+            f"{storage_toml} の storages.storage.external.{loc}.root が未設定です"
+        )
 
     storages_root = Path(root.strip())
 
     if not storages_root.exists() or not storages_root.is_dir():
-        st.error(
+        _error_stop_or_raise(
             "\n".join(
                 [
                     "外部SSDの Storages が見つかりません（未接続の可能性）。",
@@ -158,6 +170,5 @@ def resolve_storages_root(projects_root: Path) -> Path:
                 ]
             )
         )
-        st.stop()
 
     return storages_root

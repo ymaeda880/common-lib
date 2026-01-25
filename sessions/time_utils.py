@@ -1,4 +1,5 @@
 # common_lib/sessions/time_utils.py
+
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
@@ -26,5 +27,11 @@ def date_str_jst(dt: datetime) -> str:
 
 
 def dt_to_iso(dt: datetime) -> str:
-    """DB格納用 ISO 文字列（timezone付き）"""
-    return dt.astimezone(JST).isoformat(timespec="seconds")
+    """
+    DB格納 / SQLite比較用の日時文字列（JST固定）
+
+    SQLite の datetime() が返す形式（'YYYY-MM-DD HH:MM:SS'）に合わせる。
+    ※ '2026-01-14T08:11:42+09:00' のような timezone 付き ISO は
+      文字列比較になったときに TTL 判定を壊しやすいので避ける。
+    """
+    return dt.astimezone(JST).strftime("%Y-%m-%d %H:%M:%S")

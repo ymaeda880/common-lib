@@ -16,6 +16,7 @@ def record_login(
     user_sub: str,
     session_id: str,
     app_name: str,
+    page_name: Optional[str] = None,
     user_agent: Optional[str] = None,
     client_ip: Optional[str] = None,
 ) -> None:
@@ -34,14 +35,15 @@ def record_login(
         con.execute(
             """
             INSERT INTO session_state(
-              session_id, user_sub, app_name,
+              session_id, user_sub, app_name, page_name,
               login_at, last_seen, logout_at,
               user_agent, client_ip
             )
-            VALUES(?,?,?,?,?,?,?,?)
+            VALUES(?,?,?,?,?,?,?,?,?)
             ON CONFLICT(session_id) DO UPDATE SET
               user_sub   = excluded.user_sub,
               app_name   = excluded.app_name,
+              page_name  = excluded.page_name,
               -- login_at は最初の値を温存したい場合は COALESCE にする。
               -- ここでは「最新ログイン」を採用して更新する（要件に合わせて変更可能）。
               login_at   = excluded.login_at,
@@ -50,12 +52,11 @@ def record_login(
               user_agent = excluded.user_agent,
               client_ip  = excluded.client_ip
             """,
-            (session_id, user_sub, app_name, now_iso, now_iso, None, user_agent, client_ip),
+            (session_id, user_sub, app_name, page_name, now_iso, now_iso, None, user_agent, client_ip),
         )
         con.commit()
     finally:
         con.close()
-
 
 def record_heartbeat(
     *,
@@ -64,35 +65,35 @@ def record_heartbeat(
     user_sub: str,
     session_id: str,
     app_name: str,
+    page_name: Optional[str] = None,
 ) -> None:
     """
     生存更新：last_seen を更新する。
 
     期待：
     - app.py 側で 30秒間隔（cfg.heartbeat_sec）を目安に呼ぶ
-    - 本関数は呼ばれた分だけ更新する（間引きは app.py 側で実施してよい）
+    - 本関数は呼ばれた分だけ更新する（間引きは呼び出し側で実施）
     """
     now = now_jst()
     now_iso = dt_to_iso(now)
 
     con = ensure_db(db_path)
     try:
-        # session_state が無い場合は login 扱いで作ってしまう（運用上の安全策）。
-        # ただし “login を必ず先に記録する” 運用なら、ここをエラーにする設計も可能。
         con.execute(
             """
             INSERT INTO session_state(
-              session_id, user_sub, app_name,
+              session_id, user_sub, app_name, page_name,
               login_at, last_seen, logout_at
             )
-            VALUES(?,?,?,?,?,NULL)
+            VALUES(?,?,?,?,?, ?, NULL)
             ON CONFLICT(session_id) DO UPDATE SET
               user_sub  = excluded.user_sub,
               app_name  = excluded.app_name,
+              page_name = excluded.page_name,
               last_seen = excluded.last_seen,
               logout_at = NULL
             """,
-            (session_id, user_sub, app_name, now_iso, now_iso),
+            (session_id, user_sub, app_name, page_name, now_iso, now_iso),
         )
         con.commit()
     finally:

@@ -1,4 +1,4 @@
-# projects/openai/pricing/costs.py
+# common_lib/openai/costs.py
 # =============================================================================
 # 料金見積りユーティリティ（共通ライブラリ）
 # - 為替レートの取得（環境変数 / Streamlit secrets / デフォルト）
