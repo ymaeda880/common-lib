@@ -51,6 +51,15 @@ BANNER_STYLES: Dict[str, str] = {
     "orange_event": "linear-gradient(90deg,#fb8c00,#ffcc80)",
     "pink_soft": "linear-gradient(90deg,#f48fb1,#f8bbd0)",
     "purple_light": "linear-gradient(90deg,#b39ddb,#d1c4e9)",
+
+        # --- 明るい赤・暖色系 ---
+    "red_soft": "linear-gradient(90deg,#ef5350,#e57373)",        # やわらかい赤
+    "salmon": "linear-gradient(90deg,#ff8a65,#ffab91)",         # サーモン系（軽め）
+    "coral_light": "linear-gradient(90deg,#ff7043,#ffab91)",   # コーラル寄り
+    "rose": "linear-gradient(90deg,#f06292,#f8bbd0)",           # ローズ（赤×ピンク）
+    "peach": "linear-gradient(90deg,#ff9e80,#ffccbc)",         # ピーチ系
+    "red_orange": "linear-gradient(90deg,#f4511e,#ffb74d)",    # 赤橙（イベント向き）
+
 }
 
 
