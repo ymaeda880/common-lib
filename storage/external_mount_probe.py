@@ -1,10 +1,27 @@
 # -*- coding: utf-8 -*-
 # common_lib/storage/external_mount_probe.py
+# ============================================================
+# Backup mount probe（正本：storage.toml / 新設定のみ）
+#
+# 目的：
+# - backup / backup2 の「接続状況」を UI 側で表示するために、
+#   外部SSDのマウントパスを role ごとに probe する（停止しない）
+#
+# 方針：
+# - Streamlit（st）依存を入れない（st.stop しない）
+# - 返すのは Path or None と reason（文字列）だけ
+# - 旧設定（storage.external.*）は「物理削除扱い」なので参照しない
+#
+# 参照キー（新設定・正本）：
+# - [storage.backup.<loc>].root
+# - [storage.backup2.<loc>].root
+# ============================================================
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Optional, Sequence
 
 from common_lib.env.config import (
     get_location_from_command_station_secrets,
@@ -31,32 +48,31 @@ def _command_station_storage_toml_path(projects_root: Path) -> Path:
 @dataclass(frozen=True)
 class MountProbeResult:
     role: str
-    path: Optional[Path]          # 接続中なら Path / それ以外 None
-    reason: Optional[str]         # None ならOK、None以外は理由（UI表示用）
+    path: Optional[Path]      # 接続中なら Path / それ以外 None
+    reason: Optional[str]     # None ならOK、None以外は理由（UI表示用）
     storage_toml: Path
     location: str
 
 
 # ============================================================
-# 汎用：storage.toml から external root を probe（停止しない）
-# 想定キー: [storage.external.<loc>.<role>].root
+# 汎用：storage.toml から backup root を probe（停止しない）
+# 想定キー（新設定）: [storage.<role>.<loc>].root
+#   - role: backup / backup2
 # ============================================================
-def probe_external_roots(
+def probe_backup_roots_v2(
     projects_root: Path,
     *,
     roles: Sequence[str],
+    purpose_key: str,
     location: str | None = None,
 ) -> list[MountProbeResult]:
     """
     command_station の storage.toml を参照し、
-    external root（/Volumes/...）の接続状態を role ごとに probe する。
+    backup root（/Volumes/...）の接続状態を role ごとに probe する（停止しない）。
 
-    - 正本API（resolve_external_ssd_root等）と違い、st.stop しない
-    - UIで「接続中/未接続/設定不備」を表示する用途
-
-    参照:
-      storage_toml: command_station_project/command_station_app/.streamlit/storage.toml
-      key: storage.external.<loc>.<role>.root
+    参照（用途別・新設定）:
+      key: {purpose_key}.{role}.{loc}.root
+        例: storage.backup.Home.root / inbox.backup2.Prec.root
     """
     storage_toml = _command_station_storage_toml_path(projects_root)
 
@@ -64,14 +80,14 @@ def probe_external_roots(
     try:
         loc = (location or "").strip() or get_location_from_command_station_secrets(projects_root)
     except Exception as e:
-        # location が取れない時点で全roleが判定不能
+        loc_fallback = (location or "").strip()
         return [
             MountProbeResult(
                 role=r,
                 path=None,
                 reason=f"location 取得失敗: {e}",
                 storage_toml=storage_toml,
-                location=location or "",
+                location=loc_fallback,
             )
             for r in roles
         ]
@@ -106,17 +122,14 @@ def probe_external_roots(
     results: list[MountProbeResult] = []
 
     for role in roles:
-        reason: str | None = None
-        p: Path | None = None
-
         try:
-            root = data["storage"]["external"][loc][role]["root"]
+            root = data[purpose_key][role][loc]["root"]
         except Exception:
             results.append(
                 MountProbeResult(
                     role=role,
                     path=None,
-                    reason=f"[storage.external.{loc}.{role}] が storage.toml にありません",
+                    reason=f"[{purpose_key}.{role}.{loc}] が storage.toml にありません（新設定・用途別）",
                     storage_toml=storage_toml,
                     location=loc,
                 )
@@ -128,7 +141,7 @@ def probe_external_roots(
                 MountProbeResult(
                     role=role,
                     path=None,
-                    reason=f"storage.external.{loc}.{role}.root が未設定です",
+                    reason=f"{purpose_key}.{role}.{loc}.root が未設定です（新設定・用途別）",
                     storage_toml=storage_toml,
                     location=loc,
                 )
@@ -148,7 +161,6 @@ def probe_external_roots(
             )
             continue
 
-        # OK
         results.append(
             MountProbeResult(
                 role=role,
@@ -161,9 +173,31 @@ def probe_external_roots(
 
     return results
 
+# ============================================================
+# 追加
+# ============================================================
+def probe_backup_mounts_by_purpose(
+    projects_root: Path,
+    *,
+    purpose_key: str,
+    roles: Sequence[str] = ("backup", "backup2"),
+    location: str | None = None,
+) -> list[MountProbeResult]:
+    """
+    用途別の標準probe（新設定・用途別）。
+
+    purpose_key:
+      - storage / inbox / archive / databases
+    """
+    return probe_backup_roots_v2(
+        projects_root,
+        roles=roles,
+        purpose_key=purpose_key,
+        location=location,
+    )
 
 # ============================================================
-# 便利関数：roleが backup 系だけの標準probe
+# 便利関数：backup/backup2 の標準probe（新設定 v2）
 # ============================================================
 def probe_backup_mounts(
     projects_root: Path,
@@ -171,4 +205,8 @@ def probe_backup_mounts(
     roles: Sequence[str] = ("backup", "backup2"),
     location: str | None = None,
 ) -> list[MountProbeResult]:
-    return probe_external_roots(projects_root, roles=roles, location=location)
+    """
+    互換名（従来ページ用）：
+    Storages 用（purpose_key="storage"）として新設定の probe を呼ぶ。
+    """
+    return probe_backup_roots_v2(projects_root, roles=roles, purpose_key="storage", location=location)

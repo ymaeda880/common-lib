@@ -132,3 +132,35 @@ def get_location_from_command_station_secrets(projects_root: Path | None = None)
         _error_stop_or_raise(f"{secrets_path} の [env].location が未設定です")
 
     return loc.strip()
+
+
+
+# ============================================================
+# app ローカル settings.toml 取得（UI設定）
+# ============================================================
+def get_ui_banner_key_from_app_settings(app_file: Path) -> str:
+    """
+    呼び出し元ファイル（__file__）から上方向に辿り、
+    .streamlit/settings.toml を持つディレクトリを app_root とする。
+    """
+
+    p = app_file.resolve()
+
+    for parent in [p] + list(p.parents):
+        settings_path = parent / ".streamlit" / "settings.toml"
+        if settings_path.exists():
+            data = read_toml_required(settings_path)
+            try:
+                banner_key = data["ui"]["banner_key"]
+            except Exception:
+                st.error(f"{settings_path} に [ui].banner_key がありません")
+                st.stop()
+
+            if not isinstance(banner_key, str) or not banner_key.strip():
+                st.error(f"{settings_path} の [ui].banner_key が不正です")
+                st.stop()
+
+            return banner_key.strip()
+
+    st.error("settings.toml が見つかりません（.streamlit/settings.toml を確認）")
+    st.stop()
