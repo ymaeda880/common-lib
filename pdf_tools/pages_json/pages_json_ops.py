@@ -56,8 +56,9 @@ def _normalize_pages_text_list(
 def _build_pages_json_obj(
     *,
     kind: str,
-    project_year: int,
-    project_no: str,
+    collection_id: str,
+    shard_id: str,
+    doc_id: str,
     pdf_filename: str,
     source_pdf_sha256: Optional[str],
     pages_text_list: Iterable[str],
@@ -78,8 +79,9 @@ def _build_pages_json_obj(
     return ReportPagesJson(
         version=PAGES_JSON_VERSION,
         kind=str(kind),
-        project_year=int(project_year),
-        project_no=str(project_no),
+        collection_id=str(collection_id),
+        shard_id=str(shard_id),
+        doc_id=str(doc_id),
         pdf_filename=str(pdf_filename or ""),
         source_pdf_sha256=(
             str(source_pdf_sha256)
@@ -203,33 +205,26 @@ def exists_report_clean_pages_json(
 # write api
 # ============================================================
 def write_pages_json(
-    projects_root: Path,
+    path: Path,
     *,
-    project_year: int,
-    project_no: str,
+    collection_id: str,
+    shard_id: str,
+    doc_id: str,
     pdf_filename: str,
     source_pdf_sha256: Optional[str],
     pages_text_list: Iterable[str],
     kind: str,
-    role: str = "main",
 ) -> Path:
     # ------------------------------------------------------------
     # pages.json 保存
     # ------------------------------------------------------------
-    path = _get_pages_json_path(
-        projects_root,
-        project_year=int(project_year),
-        project_no=str(project_no),
-        kind=str(kind),
-        role=role,
-    )
-
     path.parent.mkdir(parents=True, exist_ok=True)
 
     obj = _build_pages_json_obj(
         kind=str(kind),
-        project_year=int(project_year),
-        project_no=str(project_no),
+        collection_id=str(collection_id),
+        shard_id=str(shard_id),
+        doc_id=str(doc_id),
         pdf_filename=str(pdf_filename or ""),
         source_pdf_sha256=source_pdf_sha256,
         pages_text_list=pages_text_list,
@@ -243,54 +238,52 @@ def write_pages_json(
 
 
 def create_raw_pages_json(
-    projects_root: Path,
+    path: Path,
     *,
-    project_year: int,
-    project_no: str,
+    collection_id: str,
+    shard_id: str,
+    doc_id: str,
     pdf_filename: str,
     source_pdf_sha256: Optional[str],
     pages_text_list: Iterable[str],
-    role: str = "main",
 ) -> Path:
     # ------------------------------------------------------------
     # raw pages.json 作成
     # ------------------------------------------------------------
     return write_pages_json(
-        projects_root,
-        project_year=int(project_year),
-        project_no=str(project_no),
+        path,
+        collection_id=str(collection_id),
+        shard_id=str(shard_id),
+        doc_id=str(doc_id),
         pdf_filename=str(pdf_filename or ""),
         source_pdf_sha256=source_pdf_sha256,
         pages_text_list=pages_text_list,
         kind=KIND_RAW,
-        role=role,
     )
 
-
 def create_clean_pages_json(
-    projects_root: Path,
+    path: Path,
     *,
-    project_year: int,
-    project_no: str,
+    collection_id: str,
+    shard_id: str,
+    doc_id: str,
     pdf_filename: str,
     source_pdf_sha256: Optional[str],
     pages_text_list: Iterable[str],
-    role: str = "main",
 ) -> Path:
     # ------------------------------------------------------------
     # clean pages.json 作成
     # ------------------------------------------------------------
     return write_pages_json(
-        projects_root,
-        project_year=int(project_year),
-        project_no=str(project_no),
+        path,
+        collection_id=str(collection_id),
+        shard_id=str(shard_id),
+        doc_id=str(doc_id),
         pdf_filename=str(pdf_filename or ""),
         source_pdf_sha256=source_pdf_sha256,
         pages_text_list=pages_text_list,
         kind=KIND_CLEAN,
-        role=role,
     )
-
 
 # ============================================================
 # read api

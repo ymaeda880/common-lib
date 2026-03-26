@@ -235,19 +235,10 @@ def _ocr_done_flag(rec) -> bool:
 
 def _sha256_from_processing_status(rec) -> str:
     # -----------------------------------------------------------------------------
-    # processing_status から sha256 を取得
-    #
-    # 候補：
-    # - sha256
-    # - pdf_sha256
-    #
-    # どちらも無ければ空文字
+    # processing_status から source pdf の sha256 を取得
     # -----------------------------------------------------------------------------
-    for name in ("sha256", "pdf_sha256"):
-        v = str(getattr(rec, name, "") or "").strip()
-        if v:
-            return v
-    return ""
+    v = str(getattr(rec, "source_pdf_sha256", "") or "").strip()
+    return v
 
 
 def _choose_text_source_for_project(

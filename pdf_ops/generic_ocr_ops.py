@@ -1,24 +1,23 @@
 # -*- coding: utf-8 -*-
-# common_lib/project_master/report_ocr_ops.py
+# common_lib/pdf_ops/generic_ocr_ops.py
 # ============================================================
-# Project Master: 報告書 OCR / text / clean オペレーション（正本API）
+# Generic PDF OCR / text / clean オペレーション（正本API）
 #
 # 役割：
-# - 報告書PDFに対する OCR 実行
+# - generic PDF に対する OCR 実行
 # - OCR済みPDFの保存
 # - raw text / clean text / extract_meta.json の保存
 # - clean後ページテキストの report_clean_pages.json 保存
 # - text/processing_status.json の更新
 #
 # 設計方針：
-# - PDF本体の保存 / 削除 / ロックは report_pdf_ops.py 側に残す
-# - 本ファイルは派生物（ocr / text / meta / pages_json）だけを扱う
-# - path解決は common_lib.project_master.paths を正本として使う
+# - path解決は common_lib.pdf_catalog を正本として使う
 # - OCR / text抽出のエンジン本体は common_lib.pdf_tools.text_extract.extract を使う
 # - OCR時に clean を行う場合は、clean後ページ単位テキストから
 #   report_clean_pages.json を作成する
 # - 判定・処理状態の正本は text/processing_status.json
 # - pdf/pdf_status.json は登録情報のみであり、本ファイルでは更新しない
+# ============================================================
 
 from __future__ import annotations
 
@@ -31,22 +30,24 @@ import shutil
 from pathlib import Path
 
 # ============================================================
-# imports（common_lib/project_master）
+# imports（pdf_catalog）
 # ============================================================
-from common_lib.project_master.projects_repo import get_project
-from common_lib.project_master.paths import (
-    normalize_year_4digits,
-    normalize_pno_3digits,
-    get_project_ocr_dir,
-    get_project_text_dir,
+from common_lib.pdf_catalog import (
+    ensure_doc_layout_dirs,
+    get_doc_pdf_dir,
+    get_source_pdf_path,
+    list_source_pdfs_by_shard,
 )
-from common_lib.project_master.report_pdf_ops import get_report_pdf_path
-from common_lib.project_master.processing_status_ops import (
-    read_processing_status,
+from common_lib.pdf_catalog.paths import (
+    get_raw_text_path,
+    get_clean_text_path,
+    get_raw_pages_json_path,
+)
+import common_lib.pdf_catalog.processing_status_ops as generic_status_ops
+from common_lib.pdf_catalog.processing_status_ops import (
     upsert_pdf_info_status,
-    mark_ocr_done,
     mark_text_extracted,
-    mark_cleaned,
+    upsert_error_status,
 )
 
 # ============================================================
@@ -63,9 +64,7 @@ from common_lib.pdf_tools.text_extract.utils import sha256_bytes
 from common_lib.pdf_tools.text_clean import (
     CleanOptions,
     clean_ocr_text,
-    decode_text_bytes,
 )
-
 from common_lib.pdf_tools.pages_json import (
     create_clean_pages_json,
 )
@@ -75,30 +74,10 @@ from common_lib.pdf_tools.pages_json import (
 # ============================================================
 REPORT_RAW_TXT_NAME = "report_raw.txt"
 REPORT_CLEAN_TXT_NAME = "report_clean.txt"
+REPORT_CLEAN_PAGES_JSON_NAME = "report_clean_pages.json"
 EXTRACT_META_JSON_NAME = "extract_meta.json"
+PROCESSING_STATUS_JSON_NAME = "processing_status.json"
 OCR_PDF_SUFFIX = "_ocr.pdf"
-
-
-# ============================================================
-# helpers（project / lock）
-# ============================================================
-def _require_project(projects_root: Path, *, year: int, pno3: str, role: str):
-    # ------------------------------------------------------------
-    # projects テーブル上の対象プロジェクト存在確認
-    # ------------------------------------------------------------
-    p = get_project(projects_root, project_year=year, project_no=pno3, role=role)
-    if p is None:
-        raise RuntimeError(
-            "projects に対象プロジェクトが未登録です（先にプロジェクトを作成してください）。"
-        )
-    return p
-
-
-def _is_locked(project) -> bool:
-    # ------------------------------------------------------------
-    # PDFロック状態
-    # ------------------------------------------------------------
-    return int(project.pdf_lock_flag or 0) == 1
 
 
 # ============================================================
@@ -147,24 +126,6 @@ def _atomic_write_json(dst: Path, obj: object) -> None:
     tmp.replace(dst)
 
 
-def _read_json_dict(path: Path) -> dict:
-    # ------------------------------------------------------------
-    # json dict 読み込み
-    # - 無ければ {}
-    # - 壊れていても {} に倒す（meta再生成用）
-    # ------------------------------------------------------------
-    if not path.exists():
-        return {}
-
-    try:
-        obj = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(obj, dict):
-            return obj
-        return {}
-    except Exception:
-        return {}
-
-
 def _clear_dir_contents_strict(*, dir_path: Path, name: str) -> None:
     # ------------------------------------------------------------
     # 配下全削除（握らない）
@@ -187,18 +148,59 @@ def _clear_dir_contents_strict(*, dir_path: Path, name: str) -> None:
 # ============================================================
 # helpers（artifact paths）
 # ============================================================
-def _get_report_raw_txt_path(*, text_dir: Path) -> Path:
+def _get_doc_root(
+    *,
+    archive_root: Path,
+    collection_id: str,
+    shard_id: str,
+    doc_id: str,
+) -> Path:
     # ------------------------------------------------------------
-    # raw txt path
+    # doc root
     # ------------------------------------------------------------
-    return text_dir / REPORT_RAW_TXT_NAME
+    pdf_dir = get_doc_pdf_dir(
+        archive_root,
+        collection_id=collection_id,
+        shard_id=shard_id,
+        doc_id=doc_id,
+    )
+    return pdf_dir.parent
 
 
-def _get_report_clean_txt_path(*, text_dir: Path) -> Path:
+def _get_doc_ocr_dir(
+    *,
+    archive_root: Path,
+    collection_id: str,
+    shard_id: str,
+    doc_id: str,
+) -> Path:
     # ------------------------------------------------------------
-    # clean txt path
+    # ocr dir
     # ------------------------------------------------------------
-    return text_dir / REPORT_CLEAN_TXT_NAME
+    return _get_doc_root(
+        archive_root=archive_root,
+        collection_id=collection_id,
+        shard_id=shard_id,
+        doc_id=doc_id,
+    ) / "ocr"
+
+
+def _get_doc_text_dir(
+    *,
+    archive_root: Path,
+    collection_id: str,
+    shard_id: str,
+    doc_id: str,
+) -> Path:
+    # ------------------------------------------------------------
+    # text dir
+    # ------------------------------------------------------------
+    return _get_doc_root(
+        archive_root=archive_root,
+        collection_id=collection_id,
+        shard_id=shard_id,
+        doc_id=doc_id,
+    ) / "text"
 
 
 def _get_extract_meta_path(*, text_dir: Path) -> Path:
@@ -208,12 +210,27 @@ def _get_extract_meta_path(*, text_dir: Path) -> Path:
     return text_dir / EXTRACT_META_JSON_NAME
 
 
+def _get_report_clean_pages_json_path(*, text_dir: Path) -> Path:
+    # ------------------------------------------------------------
+    # clean pages json path
+    # ------------------------------------------------------------
+    return text_dir / REPORT_CLEAN_PAGES_JSON_NAME
+
+
+def _get_processing_status_path(*, text_dir: Path) -> Path:
+    # ------------------------------------------------------------
+    # processing_status path
+    # ------------------------------------------------------------
+    return text_dir / PROCESSING_STATUS_JSON_NAME
+
+
 def _get_report_ocr_pdf_path(*, ocr_dir: Path, original_pdf_filename: str) -> Path:
     # ------------------------------------------------------------
     # OCR済みPDF path
     # ------------------------------------------------------------
     stem = Path(str(original_pdf_filename or "report.pdf")).stem
     return ocr_dir / f"{stem}{OCR_PDF_SUFFIX}"
+
 
 def _join_pages_text(pages_text_list: list[str]) -> str:
     # ------------------------------------------------------------
@@ -243,6 +260,7 @@ def _extract_text_from_pdf_bytes_by_page(
         pages.append(str(one_page_text or ""))
 
     return pages
+
 
 # ============================================================
 # helpers（meta）
@@ -315,20 +333,35 @@ def _build_default_clean_options() -> CleanOptions:
 
 
 # ============================================================
-# public（OCR pipeline）
+# helpers（status optional）
 # ============================================================
-def run_report_ocr_pipeline(
-    projects_root: Path,
+def _call_optional_status_op(name: str, **kwargs) -> None:
+    # ------------------------------------------------------------
+    # generic processing_status_ops に実装があれば呼ぶ
+    # - 現時点で mark_ocr_done / mark_cleaned の有無が未確認のため
+    #   無ければ no-op とする
+    # ------------------------------------------------------------
+    fn = getattr(generic_status_ops, name, None)
+    if callable(fn):
+        fn(**kwargs)
+
+
+# ============================================================
+# public（OCR pipeline：1件）
+# ============================================================
+def run_generic_ocr_pipeline(
+    archive_root: Path,
     *,
-    project_year: int | str,
-    project_no: int | str,
+    collection_id: str,
+    shard_id: str,
+    doc_id: str,
+    pdf_filename: str,
     done_by: str,
     ocr_lang: str = "jpn+eng",
     do_clean_text: bool = True,
-    role: str = "main",
 ) -> dict[str, object]:
     # ------------------------------------------------------------
-    # 報告書1件に対して OCR / text抽出 / clean保存 を実行する
+    # generic PDF 1件に対して OCR / text抽出 / clean保存 を実行する
     #
     # 出力：
     # - ocr/<stem>_ocr.pdf        （image PDF の場合）
@@ -337,41 +370,54 @@ def run_report_ocr_pipeline(
     # - text/extract_meta.json
     # - text/processing_status.json 更新
     # ------------------------------------------------------------
-    y = normalize_year_4digits(project_year)
-    pno3 = normalize_pno_3digits(project_no)
-
-    # ------------------------------------------------------------
-    # project / PDF存在確認
-    # ------------------------------------------------------------
-    project = _require_project(projects_root, year=y, pno3=pno3, role=role)
-
-    pdf_path = get_report_pdf_path(
-        projects_root,
-        project_year=y,
-        project_no=pno3,
-        role=role,
+    ensure_doc_layout_dirs(
+        archive_root,
+        collection_id=collection_id,
+        shard_id=shard_id,
+        doc_id=doc_id,
     )
-    if pdf_path is None or (not pdf_path.exists()):
-        raise RuntimeError(f"報告書PDFが存在しません。 year={y} pno={pno3}")
 
-    pdf_bytes = pdf_path.read_bytes()
+    source_pdf_path = get_source_pdf_path(
+        archive_root,
+        collection_id=collection_id,
+        shard_id=shard_id,
+        doc_id=doc_id,
+    )
+
+    doc_pdf_dir = get_doc_pdf_dir(
+        archive_root,
+        collection_id=collection_id,
+        shard_id=shard_id,
+        doc_id=doc_id,
+    )
+    copied_pdf_path = doc_pdf_dir / str(pdf_filename or "")
+
+    # ------------------------------------------------------------
+    # 展開済みPDFがあれば優先、無ければ原本PDF
+    # ------------------------------------------------------------
+    target_pdf_path = copied_pdf_path if copied_pdf_path.exists() else source_pdf_path
+
+    if target_pdf_path is None or (not target_pdf_path.exists()):
+        raise RuntimeError(
+            f"対象PDFが存在しません。 collection_id={collection_id} shard_id={shard_id} doc_id={doc_id}"
+        )
+
+    pdf_bytes = target_pdf_path.read_bytes()
     pdf_sha256 = sha256_bytes(pdf_bytes)
 
-    # ------------------------------------------------------------
-    # dirs
-    # ------------------------------------------------------------
-    ocr_dir = get_project_ocr_dir(
-        projects_root,
-        project_year=y,
-        project_no=pno3,
-        role=role,
+    ocr_dir = _get_doc_ocr_dir(
+        archive_root=archive_root,
+        collection_id=collection_id,
+        shard_id=shard_id,
+        doc_id=doc_id,
     )
-    text_dir = get_project_text_dir(
-        projects_root,
-        project_year=y,
-        project_no=pno3,
-        role=role,
+    text_dir = _get_doc_text_dir(
+        archive_root=archive_root,
+        collection_id=collection_id,
+        shard_id=shard_id,
+        doc_id=doc_id,
     )
+
     _require_existing_dir(dir_path=ocr_dir, name="ocr_dir")
     _require_existing_dir(dir_path=text_dir, name="text_dir")
 
@@ -405,10 +451,11 @@ def run_report_ocr_pipeline(
     # processing_status.json に PDF基本情報を記録
     # ------------------------------------------------------------
     upsert_pdf_info_status(
-        projects_root,
-        project_year=y,
-        project_no=pno3,
-        source_pdf_filename=str(pdf_path.name),
+        archive_root,
+        collection_id=collection_id,
+        shard_id=shard_id,
+        doc_id=doc_id,
+        source_pdf_filename=str(target_pdf_path.name),
         source_pdf_sha256=str(pdf_sha256),
         pdf_kind=str(pdfkind),
         page_count=int(page_count_total),
@@ -418,10 +465,21 @@ def run_report_ocr_pipeline(
     # ------------------------------------------------------------
     # paths
     # ------------------------------------------------------------
-    raw_txt_path = _get_report_raw_txt_path(text_dir=text_dir)
-    clean_txt_path = _get_report_clean_txt_path(text_dir=text_dir)
-    clean_pages_json_path = text_dir / "report_clean_pages.json"
+    raw_txt_path = get_raw_text_path(
+        archive_root,
+        collection_id=collection_id,
+        shard_id=shard_id,
+        doc_id=doc_id,
+    )
+    clean_txt_path = get_clean_text_path(
+        archive_root,
+        collection_id=collection_id,
+        shard_id=shard_id,
+        doc_id=doc_id,
+    )
+    clean_pages_json_path = _get_report_clean_pages_json_path(text_dir=text_dir)
     meta_path = _get_extract_meta_path(text_dir=text_dir)
+    processing_status_path = _get_processing_status_path(text_dir=text_dir)
 
     started_at = dt.datetime.now().replace(microsecond=0).isoformat()
 
@@ -437,10 +495,11 @@ def run_report_ocr_pipeline(
         # PDF基本情報は text_dir 全消し後に再記録
         # --------------------------------------------------------
         upsert_pdf_info_status(
-            projects_root,
-            project_year=y,
-            project_no=pno3,
-            source_pdf_filename=str(pdf_path.name),
+            archive_root,
+            collection_id=collection_id,
+            shard_id=shard_id,
+            doc_id=doc_id,
+            source_pdf_filename=str(target_pdf_path.name),
             source_pdf_sha256=str(pdf_sha256),
             pdf_kind=str(pdfkind),
             page_count=int(page_count_total),
@@ -462,12 +521,9 @@ def run_report_ocr_pipeline(
             ocr_pdf_filename = ""
 
         # --------------------------------------------------------
-        # image PDF：ロック済みのみ OCR 実行
-        # --------------------------------------------------------   
+        # image PDF：OCR 実行
+        # --------------------------------------------------------
         elif pdfkind == "image":
-            if not _is_locked(project):
-                raise RuntimeError("画像PDFですがロック未済のため OCR 実行できません。")
-
             ocr_pdf_bytes = build_ocr_pdf_bytes(
                 fitz=fitz,
                 pdf_bytes=pdf_bytes,
@@ -479,7 +535,7 @@ def run_report_ocr_pipeline(
 
             ocr_pdf_path = _get_report_ocr_pdf_path(
                 ocr_dir=ocr_dir,
-                original_pdf_filename=str(pdf_path.name),
+                original_pdf_filename=str(target_pdf_path.name),
             )
             _atomic_write_bytes(ocr_pdf_path, ocr_pdf_bytes)
 
@@ -493,10 +549,12 @@ def run_report_ocr_pipeline(
             used_ocr = True
             ocr_pdf_filename = str(ocr_pdf_path.name)
 
-            mark_ocr_done(
-                projects_root,
-                project_year=y,
-                project_no=pno3,
+            _call_optional_status_op(
+                "mark_ocr_done",
+                archive_root=archive_root,
+                collection_id=collection_id,
+                shard_id=shard_id,
+                doc_id=doc_id,
                 done_by=str(done_by),
             )
 
@@ -509,9 +567,10 @@ def run_report_ocr_pipeline(
         _atomic_write_text(raw_txt_path, str(raw_text or ""))
 
         mark_text_extracted(
-            projects_root,
-            project_year=y,
-            project_no=pno3,
+            archive_root,
+            collection_id=collection_id,
+            shard_id=shard_id,
+            doc_id=doc_id,
             done_by=str(done_by),
         )
 
@@ -546,18 +605,20 @@ def run_report_ocr_pipeline(
 
                 create_clean_pages_json(
                     clean_pages_json_path,
-                    collection_id="project",
-                    shard_id=str(int(y)),
-                    doc_id=f"{int(y):04d}-{str(pno3)}",
-                    pdf_filename=str(pdf_path.name),
+                    collection_id=str(collection_id),
+                    shard_id=str(shard_id),
+                    doc_id=str(doc_id),
+                    pdf_filename=str(target_pdf_path.name),
                     source_pdf_sha256=str(pdf_sha256),
                     pages_text_list=clean_page_texts,
                 )
 
-                mark_cleaned(
-                    projects_root,
-                    project_year=y,
-                    project_no=pno3,
+                _call_optional_status_op(
+                    "mark_cleaned",
+                    archive_root=archive_root,
+                    collection_id=collection_id,
+                    shard_id=shard_id,
+                    doc_id=doc_id,
                     done_by=str(done_by),
                 )
 
@@ -570,7 +631,7 @@ def run_report_ocr_pipeline(
         # meta 保存
         # --------------------------------------------------------
         meta_obj = _build_extract_meta_obj(
-            source_pdf_filename=str(pdf_path.name),
+            source_pdf_filename=str(target_pdf_path.name),
             source_pdf_sha256=str(pdf_sha256),
             raw_text_filename=REPORT_RAW_TXT_NAME,
             clean_text_filename=REPORT_CLEAN_TXT_NAME if clean_applied else "",
@@ -589,16 +650,11 @@ def run_report_ocr_pipeline(
         )
         _atomic_write_json(meta_path, meta_obj)
 
-        rec = read_processing_status(
-            projects_root,
-            project_year=y,
-            project_no=pno3,
-        )
-
         return {
             "status": "ok",
-            "project_year": int(y),
-            "project_no": str(pno3),
+            "collection_id": str(collection_id),
+            "shard_id": str(shard_id),
+            "doc_id": str(doc_id),
             "pdf_kind": str(pdfkind),
             "page_count": int(page_count_total),
             "used_ocr": bool(used_ocr),
@@ -607,14 +663,14 @@ def run_report_ocr_pipeline(
             "extract_meta_path": str(meta_path),
             "ocr_pdf_filename": str(ocr_pdf_filename),
             "clean_applied": bool(clean_applied),
-            "processing_status_path": str(rec.path),
+            "processing_status_path": str(processing_status_path),
         }
 
     except Exception as e:  # noqa: BLE001
         finished_at = dt.datetime.now().replace(microsecond=0).isoformat()
 
         meta_obj = _build_extract_meta_obj(
-            source_pdf_filename=str(pdf_path.name),
+            source_pdf_filename=str(target_pdf_path.name),
             source_pdf_sha256=str(pdf_sha256),
             raw_text_filename=REPORT_RAW_TXT_NAME,
             clean_text_filename="",
@@ -632,78 +688,95 @@ def run_report_ocr_pipeline(
             cleaned_at=None,
         )
         _atomic_write_json(meta_path, meta_obj)
+
+        upsert_error_status(
+            archive_root,
+            collection_id=collection_id,
+            shard_id=shard_id,
+            doc_id=doc_id,
+            source_pdf_filename=str(target_pdf_path.name),
+            source_pdf_sha256=str(pdf_sha256),
+            pdf_kind=str(pdfkind),
+            page_count=int(page_count_total),
+            done_by=str(done_by),
+            error_message=str(e),
+        )
         raise
 
 
 # ============================================================
-# public（clean only）
+# public（OCR pipeline：複数件）
 # ============================================================
-def run_report_clean_only(
-    projects_root: Path,
+def run_generic_ocr_pipeline_for_selected_docs(
+    archive_root: Path,
     *,
-    project_year: int | str,
-    project_no: int | str,
+    collection_id: str,
+    shard_id: str,
+    selected_doc_ids: list[str],
     done_by: str,
-    role: str = "main",
-) -> dict[str, object]:
+    ocr_lang: str = "jpn+eng",
+    do_clean_text: bool = True,
+    force_rerun: bool = False,
+) -> tuple[str, list[str]]:
     # ------------------------------------------------------------
-    # raw text から clean text のみ再生成する
-    # - processing_status.json の cleaned 系も更新する
+    # generic PDF 複数件に対して OCR / text抽出 / clean保存 を実行する
     # ------------------------------------------------------------
-    y = normalize_year_4digits(project_year)
-    pno3 = normalize_pno_3digits(project_no)
+    target_doc_ids = set(str(x) for x in (selected_doc_ids or []))
 
-    text_dir = get_project_text_dir(
-        projects_root,
-        project_year=y,
-        project_no=pno3,
-        role=role,
-    )
-    _require_existing_dir(dir_path=text_dir, name="text_dir")
+    if not target_doc_ids:
+        return "OCR実行: 対象 0 件", []
 
-    raw_txt_path = _get_report_raw_txt_path(text_dir=text_dir)
-    clean_txt_path = _get_report_clean_txt_path(text_dir=text_dir)
-    meta_path = _get_extract_meta_path(text_dir=text_dir)
-
-    if not raw_txt_path.exists():
-        raise RuntimeError(f"{REPORT_RAW_TXT_NAME} が存在しません。 path={raw_txt_path}")
-
-    raw_text = decode_text_bytes(raw_txt_path.read_bytes())
-
-    clean_options = _build_default_clean_options()
-    clean_text, _clean_report = clean_ocr_text(raw_text, clean_options)
-    _atomic_write_text(clean_txt_path, str(clean_text or ""))
-
-    mark_cleaned(
-        projects_root,
-        project_year=y,
-        project_no=pno3,
-        done_by=str(done_by),
+    records = list_source_pdfs_by_shard(
+        archive_root,
+        collection_id=str(collection_id),
+        shard_id=str(shard_id),
     )
 
-    meta_obj = _read_json_dict(meta_path)
-    if not isinstance(meta_obj, dict):
-        meta_obj = {}
+    ok_count = 0
+    skip_count = 0
+    error_lines: list[str] = []
 
-    meta_obj["cleaning"] = {
-        "clean_applied": True,
-        "cleaned_at": dt.datetime.now().replace(microsecond=0).isoformat(),
-    }
-    meta_obj["clean_text_filename"] = REPORT_CLEAN_TXT_NAME
-    _atomic_write_json(meta_path, meta_obj)
+    for rec in records:
+        try:
+            if str(rec.doc_id) not in target_doc_ids:
+                continue
 
-    rec = read_processing_status(
-        projects_root,
-        project_year=y,
-        project_no=pno3,
-    )
+            raw_txt_path = get_raw_text_path(
+                archive_root,
+                collection_id=str(collection_id),
+                shard_id=str(shard_id),
+                doc_id=str(rec.doc_id),
+            )
+            clean_txt_path = get_clean_text_path(
+                archive_root,
+                collection_id=str(collection_id),
+                shard_id=str(shard_id),
+                doc_id=str(rec.doc_id),
+            )
 
-    return {
-        "status": "ok",
-        "project_year": int(y),
-        "project_no": str(pno3),
-        "raw_text_path": str(raw_txt_path),
-        "clean_text_path": str(clean_txt_path),
-        "extract_meta_path": str(meta_path),
-        "processing_status_path": str(rec.path),
-    }
+            # ----------------------------------------------------
+            # 再実行しない場合は既存成果物でスキップ
+            # ----------------------------------------------------
+            if not bool(force_rerun):
+                if raw_txt_path.exists():
+                    if (not do_clean_text) or clean_txt_path.exists():
+                        skip_count += 1
+                        continue
+
+            run_generic_ocr_pipeline(
+                archive_root,
+                collection_id=str(collection_id),
+                shard_id=str(shard_id),
+                doc_id=str(rec.doc_id),
+                pdf_filename=str(rec.pdf_filename),
+                done_by=str(done_by),
+                ocr_lang=str(ocr_lang or "jpn+eng"),
+                do_clean_text=bool(do_clean_text),
+            )
+            ok_count += 1
+
+        except Exception as e:
+            error_lines.append(f"{rec.doc_id} | {e}")
+
+    msg = f"OCR実行: ok {ok_count} 件 / skip {skip_count} 件 / error {len(error_lines)} 件"
+    return msg, error_lines

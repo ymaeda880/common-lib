@@ -11,7 +11,6 @@
 #   - OCR
 #   - text抽出
 #   - cleaning
-#   - RAG取り込み
 #
 # ■ 配置
 # - <year>/<pno>/text/processing_status.json
@@ -23,6 +22,8 @@
 # - 各処理は「いつ」「誰が」を明示記録する
 # - source_pdf_sha256 により、処理対象PDFの同一性を追跡する
 # - PDF登録直後は processing_status.json を作らない
+# - RAG取り込み状態はこのファイルでは管理しない
+# - RAG取込済み判定の正本は Databases/vectorstore/.../processed_files.json とする
 # ============================================================
 
 from __future__ import annotations
@@ -52,11 +53,6 @@ PROCESSING_STATUS_FILENAME = "processing_status.json"
 
 PDF_KIND_TEXT = "text"
 PDF_KIND_IMAGE = "image"
-
-RAG_STATUS_NOT_INGESTED = "not_ingested"
-RAG_STATUS_INGESTED = "ingested"
-RAG_STATUS_FAILED = "failed"
-
 
 # ============================================================
 # dataclasses
@@ -102,28 +98,9 @@ class ProcessingStatusRecord:
     cleaned_by: Optional[str]
 
     # ------------------------------------------------------------
-    # RAG
-    # ------------------------------------------------------------
-    rag_ingested: bool
-    rag_ingested_at: Optional[str]
-    rag_ingested_by: Optional[str]
-    rag_status: Optional[str]
-
-    # ------------------------------------------------------------
     # 失敗情報
     # ------------------------------------------------------------
     error_message: Optional[str]
-
-
-@dataclass(frozen=True)
-class ProcessingStatusStateInfo:
-    # ------------------------------------------------------------
-    # state.py / UI向け軽量情報
-    # ------------------------------------------------------------
-    rag_status: Optional[str]
-    rag_ingested_at: Optional[str]
-    rag_ingested_by: Optional[str]
-    can_edit_text: bool
 
 
 # ============================================================
@@ -190,16 +167,6 @@ def _normalize_pdf_kind(value: Any) -> Optional[str]:
     if s in {PDF_KIND_TEXT, PDF_KIND_IMAGE}:
         return s
     return s
-
-
-def _normalize_rag_status(value: Any) -> Optional[str]:
-    # ------------------------------------------------------------
-    # rag status を正規化
-    # ------------------------------------------------------------
-    s = _normalize_optional_str(value)
-    if s is None:
-        return None
-    return s.lower()
 
 
 def _now_iso() -> str:
@@ -307,10 +274,6 @@ def _empty_payload() -> Dict[str, Any]:
         "cleaned": False,
         "cleaned_at": None,
         "cleaned_by": None,
-        "rag_ingested": False,
-        "rag_ingested_at": None,
-        "rag_ingested_by": None,
-        "rag_status": None,
         "error_message": None,
     }
 
@@ -353,10 +316,6 @@ def _payload_to_record(
         cleaned=_normalize_bool(payload.get("cleaned")),
         cleaned_at=_normalize_optional_str(payload.get("cleaned_at")),
         cleaned_by=_normalize_optional_str(payload.get("cleaned_by")),
-        rag_ingested=_normalize_bool(payload.get("rag_ingested")),
-        rag_ingested_at=_normalize_optional_str(payload.get("rag_ingested_at")),
-        rag_ingested_by=_normalize_optional_str(payload.get("rag_ingested_by")),
-        rag_status=_normalize_rag_status(payload.get("rag_status")),
         error_message=_normalize_optional_str(payload.get("error_message")),
     )
 
@@ -381,10 +340,6 @@ def _record_to_payload(rec: ProcessingStatusRecord) -> Dict[str, Any]:
         "cleaned": bool(rec.cleaned),
         "cleaned_at": rec.cleaned_at,
         "cleaned_by": rec.cleaned_by,
-        "rag_ingested": bool(rec.rag_ingested),
-        "rag_ingested_at": rec.rag_ingested_at,
-        "rag_ingested_by": rec.rag_ingested_by,
-        "rag_status": rec.rag_status,
         "error_message": rec.error_message,
     }
 
@@ -458,6 +413,7 @@ def read_processing_status(
     # processing_status.json を読む
     # - 無ければ未処理として返す
     # - 壊れていれば例外
+    # - 旧形式の rag_* キーは無視する
     # ------------------------------------------------------------
     path = get_processing_status_path(
         projects_root,
@@ -560,7 +516,8 @@ def upsert_pdf_info_status(
     # ------------------------------------------------------------
     # PDF基本情報を記録
     # - 新しい source pdf を正本として記録
-    # - OCR / text / cleaning / RAG はリセットする
+    # - OCR / text / cleaning はリセットする
+    # - RAG状態はこのファイルでは管理しない
     # ------------------------------------------------------------
     now_iso = _now_iso()
 
@@ -583,10 +540,6 @@ def upsert_pdf_info_status(
         cleaned=False,
         cleaned_at=None,
         cleaned_by=None,
-        rag_ingested=False,
-        rag_ingested_at=None,
-        rag_ingested_by=None,
-        rag_status=RAG_STATUS_NOT_INGESTED,
         error_message=None,
     )
 
@@ -660,74 +613,24 @@ def mark_cleaned(
     )
 
 
-def mark_rag_ingested(
-    projects_root: Path,
-    *,
-    project_year: int | str,
-    project_no: int | str,
-    done_by: str,
-) -> Path:
-    # ------------------------------------------------------------
-    # RAG取り込み完了
-    # ------------------------------------------------------------
-    now_iso = _now_iso()
-
-    return _update_processing_status(
-        projects_root,
-        project_year=project_year,
-        project_no=project_no,
-        rag_ingested=True,
-        rag_ingested_at=now_iso,
-        rag_ingested_by=_normalize_optional_str(done_by),
-        rag_status=RAG_STATUS_INGESTED,
-        error_message=None,
-    )
-
-
-def mark_rag_failed(
-    projects_root: Path,
-    *,
-    project_year: int | str,
-    project_no: int | str,
-    error_message: str,
-) -> Path:
-    # ------------------------------------------------------------
-    # RAG取り込み失敗
-    # ------------------------------------------------------------
-    return _update_processing_status(
-        projects_root,
-        project_year=project_year,
-        project_no=project_no,
-        rag_ingested=False,
-        rag_status=RAG_STATUS_FAILED,
-        error_message=_normalize_optional_str(error_message),
-    )
-
-
 # ============================================================
-# public（state / ui helpers）
+# public（compat helpers）
 # ============================================================
 def get_processing_status_for_state(
     projects_root: Path,
     *,
     project_year: int | str,
     project_no: int | str,
-) -> ProcessingStatusStateInfo:
+) -> ProcessingStatusRecord:
     # ------------------------------------------------------------
-    # state.py / UI 向け軽量情報
-    # - rag_ingested=True なら text変更不可
+    # 互換用
+    # - 旧来の state / UI 呼び出し用に record を返す
+    # - RAG状態はこのファイルでは管理しないため参照不可
     # ------------------------------------------------------------
-    rec = read_processing_status(
+    return read_processing_status(
         projects_root,
         project_year=project_year,
         project_no=project_no,
-    )
-
-    return ProcessingStatusStateInfo(
-        rag_status=rec.rag_status,
-        rag_ingested_at=rec.rag_ingested_at,
-        rag_ingested_by=rec.rag_ingested_by,
-        can_edit_text=not bool(rec.rag_ingested),
     )
 
 
@@ -738,14 +641,20 @@ def is_rag_ingested(
     project_no: int | str,
 ) -> bool:
     # ------------------------------------------------------------
-    # RAG取り込み済みか
+    # 互換用
+    # - processing_status.json では RAG状態を管理しない
+    # - 常に False を返す
+    #
+    # 注意：
+    # - 新規コードでは使用禁止
+    # - RAG取込済み判定は processed_files.json を正本とすること
     # ------------------------------------------------------------
-    rec = read_processing_status(
+    _ = read_processing_status(
         projects_root,
         project_year=project_year,
         project_no=project_no,
     )
-    return bool(rec.rag_ingested)
+    return False
 
 
 def matches_source_pdf(

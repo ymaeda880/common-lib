@@ -51,9 +51,11 @@ _PROJECTS_PK_COLS = (
 # ------------------------------------------------------------
 _PROJECTS_DATA_COLS = (
     "project_name",
+    "project_short_name",
     "client_name",
     "main_department",
     "contract_amount",
+    "confidential_flag",
     "input_user_id",
     "input_date",
     "update_user_id",

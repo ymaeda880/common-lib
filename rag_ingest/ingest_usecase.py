@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # common_lib/rag_ingest/ingest_usecase.py
 # =============================================================================
 # RAG ingest : 1文書取り込み usecase
@@ -25,6 +26,10 @@
 # - 同時にページ境界表を作り、その全文上の chunk span から
 #   page_start / page_end を機械的に決定する
 # - これにより、chunk / span / page が同一基準で一致する
+#
+# 今回の追加方針：
+# - append 前までの処理を prepare_one_document_payload() に切り出す
+# - clean rebuild 側はこの helper を再利用する
 # =============================================================================
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ from __future__ import annotations
 # imports
 # =============================================================================
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -45,12 +51,34 @@ from .manifest_ops import (
     build_processed_file_record,
     utc_now_iso_z,
 )
-from .models import ChunkRecord, IngestResult, IngestSource, MetaRecord
+from .models import ChunkRecord, IngestResult, IngestSource, MetaRecord, ProcessedFileRecord
 from .vectorstore_io import (
     append_to_vectorstore,
     get_next_vector_index,
     get_processed_record,
 )
+
+# =============================================================================
+# dataclass：prepared payload
+# =============================================================================
+@dataclass(slots=True)
+class PreparedDocumentPayload:
+    # -------------------------------------------------------------------------
+    # 1文書分の append 前 payload
+    #
+    # 用途：
+    # - ingest_one_document() では append_to_vectorstore() に渡す前段結果
+    # - shard clean rebuild では全doc分を集約して save_vectorstore_snapshot() に渡す
+    # -------------------------------------------------------------------------
+    source: IngestSource
+    ingested_at: str
+    ingest_text: str
+    page_ranges: list[dict]
+    chunks: list[ChunkRecord]
+    chunk_page_ranges: list[tuple[int, int]]
+    new_vectors: np.ndarray
+    meta_records: list[MetaRecord]
+    processed_record: ProcessedFileRecord
 
 
 # =============================================================================
@@ -183,6 +211,7 @@ def _load_pages_json(
     return out
 
 
+
 def _build_source_text_and_page_ranges_from_pages(
     *,
     pages: list[dict],
@@ -191,7 +220,8 @@ def _build_source_text_and_page_ranges_from_pages(
     # pages 配列から ingest 用全文とページ境界表を作る
     #
     # 方針：
-    # - pages[].text を順番にそのまま連結する
+    # - pages[].text を順番に連結する
+    # - ページ間には区切り改行を 1 つ入れる
     # - 同時に page_no / start / end（end は exclusive）を記録する
     #
     # 戻り値：
@@ -210,12 +240,16 @@ def _build_source_text_and_page_ranges_from_pages(
 
     cursor = 0
 
-    for row in pages:
+    for i, row in enumerate(pages):
         page_no = int(row.get("page_no", 0) or 0)
         page_text = str(row.get("text", "") or "")
 
         if page_no <= 0:
             continue
+
+        if i > 0:
+            full_text_parts.append("\n")
+            cursor += 1
 
         start = int(cursor)
         full_text_parts.append(page_text)
@@ -352,6 +386,155 @@ def _build_meta_records(
 
 
 # =============================================================================
+# public helper：prepare payload
+# =============================================================================
+def prepare_one_document_payload(
+    *,
+    projects_root: Path,
+    user_sub: str,
+    app_name: str,
+    page_name: str,
+    source: IngestSource,
+    start_vector_index: int,
+    chunk_options: Optional[ChunkOptions] = None,
+) -> PreparedDocumentPayload:
+    # -----------------------------------------------------------------------------
+    # 1文書分の append 前 payload を構築する
+    #
+    # flow:
+    # 1. pages json から ingest 用全文 + ページ境界表を構築
+    # 2. chunk 化
+    # 3. page_start / page_end 計算
+    # 4. embedding
+    # 5. meta / processed 作成
+    #
+    # 注意：
+    # - vectorstore への append は行わない
+    # - start_vector_index は caller 側が与える
+    # -----------------------------------------------------------------------------
+    if not str(source.collection_id or "").strip():
+        raise ValueError("source.collection_id が空です。")
+
+    if not str(source.shard_id or "").strip():
+        raise ValueError("source.shard_id が空です。")
+
+    if not str(source.doc_id or "").strip():
+        raise ValueError("source.doc_id が空です。")
+
+    if not str(source.source_pages_path or "").strip():
+        raise RuntimeError("source_pages_path が空のため page 情報を解決できません。")
+
+    # -------------------------------------------------------------------------
+    # pages json 読込
+    # -------------------------------------------------------------------------
+    pages_json_path = _resolve_source_pages_abs_path(
+        projects_root=projects_root,
+        source=source,
+    )
+
+    pages = _load_pages_json(
+        pages_json_path=pages_json_path,
+    )
+
+    # -------------------------------------------------------------------------
+    # ingest 用全文 + ページ境界表の構築
+    # -------------------------------------------------------------------------
+    ingest_text, page_ranges = _build_source_text_and_page_ranges_from_pages(
+        pages=pages,
+    )
+
+    if not str(ingest_text or "").strip():
+        raise RuntimeError("pages json から構築した ingest 用全文が空です。")
+
+    # -------------------------------------------------------------------------
+    # chunk 化
+    # -------------------------------------------------------------------------
+    chunks = chunk_text(
+        str(ingest_text),
+        options=chunk_options,
+    )
+
+    if not chunks:
+        raise RuntimeError("chunk を生成できませんでした。")
+
+    chunk_texts = _build_chunk_texts(chunks)
+    if not chunk_texts:
+        raise RuntimeError("有効な chunk テキストが存在しません。")
+
+    # -------------------------------------------------------------------------
+    # page_start / page_end 計算
+    # -------------------------------------------------------------------------
+    chunk_page_ranges = _build_chunk_page_ranges(
+        chunks=chunks,
+        page_ranges=page_ranges,
+    )
+
+    # -------------------------------------------------------------------------
+    # embedding
+    # -------------------------------------------------------------------------
+    embed_res = run_embedding_for_chunks(
+        projects_root=projects_root,
+        user_sub=str(user_sub),
+        app_name=str(app_name),
+        page_name=str(page_name),
+        model_key=str(source.embed_model),
+        chunk_texts=chunk_texts,
+        feature=f"rag_ingest:{source.collection_id}",
+        meta={
+            "collection_id": str(source.collection_id),
+            "shard_id": str(source.shard_id),
+            "doc_id": str(source.doc_id),
+            "file_name": str(source.file_name),
+            "source_text_kind": str(source.source_text_kind),
+            "chunk_count": len(chunks),
+            "source_chars": len(str(ingest_text or "")),
+            "attrs": dict(source.attrs or {}),
+        },
+    )
+
+    if len(embed_res.vectors) != len(chunks):
+        raise RuntimeError(
+            "embedding 結果件数と chunk 件数が一致しません。"
+            f" chunk_count={len(chunks)}, vector_count={len(embed_res.vectors)}"
+        )
+
+    # -------------------------------------------------------------------------
+    # meta / processed 作成
+    # -------------------------------------------------------------------------
+    ingested_at = utc_now_iso_z()
+
+    meta_records = _build_meta_records(
+        source=source,
+        chunks=chunks,
+        chunk_page_ranges=chunk_page_ranges,
+        start_vector_index=int(start_vector_index),
+        ingested_at=ingested_at,
+    )
+
+    processed_record = build_processed_file_record(
+        source=source,
+        ingested_at=ingested_at,
+    )
+
+    # -------------------------------------------------------------------------
+    # vectors 変換
+    # -------------------------------------------------------------------------
+    new_vectors = np.asarray(embed_res.vectors, dtype=np.float32)
+
+    return PreparedDocumentPayload(
+        source=source,
+        ingested_at=ingested_at,
+        ingest_text=str(ingest_text),
+        page_ranges=page_ranges,
+        chunks=chunks,
+        chunk_page_ranges=chunk_page_ranges,
+        new_vectors=new_vectors,
+        meta_records=meta_records,
+        processed_record=processed_record,
+    )
+
+
+# =============================================================================
 # main
 # =============================================================================
 def ingest_one_document(
@@ -370,12 +553,8 @@ def ingest_one_document(
     #
     # flow:
     # 1. 既存 processed 確認
-    # 2. pages json から ingest 用全文 + ページ境界表を構築
-    # 3. chunk 化
-    # 4. page_start / page_end 計算
-    # 5. embedding
-    # 6. meta / processed 生成
-    # 7. vectorstore へ append
+    # 2. payload 構築
+    # 3. vectorstore へ append
     #
     # 引数：
     # - projects_root:
@@ -435,146 +614,55 @@ def ingest_one_document(
             message="すでに processed 済みのため skip しました。",
         )
 
-    # -------------------------------------------------------------------------
-    # pages json 読込
-    # -------------------------------------------------------------------------
-    pages_json_path = _resolve_source_pages_abs_path(
-        projects_root=projects_root,
-        source=source,
-    )
-
-    pages = _load_pages_json(
-        pages_json_path=pages_json_path,
-    )
-
-    # -------------------------------------------------------------------------
-    # ingest 用全文 + ページ境界表の構築
-    # -------------------------------------------------------------------------
-    ingest_text, page_ranges = _build_source_text_and_page_ranges_from_pages(
-        pages=pages,
-    )
-
-    if not str(ingest_text or "").strip():
-        return _build_ingest_result(
-            status="skip",
-            source=source,
-            message="pages json から構築した ingest 用全文が空のため ingest を行いません。",
+    try:
+        # ---------------------------------------------------------------------
+        # 次 vector index
+        # ---------------------------------------------------------------------
+        start_vector_index = get_next_vector_index(
+            databases_root=databases_root,
+            collection_id=str(source.collection_id),
+            shard_id=str(source.shard_id),
         )
 
-    # -------------------------------------------------------------------------
-    # chunk 化
-    # -------------------------------------------------------------------------
-    chunks = chunk_text(
-        str(ingest_text),
-        options=chunk_options,
-    )
-
-    if not chunks:
-        return _build_ingest_result(
-            status="skip",
+        # ---------------------------------------------------------------------
+        # payload 構築
+        # ---------------------------------------------------------------------
+        payload = prepare_one_document_payload(
+            projects_root=projects_root,
+            user_sub=str(user_sub),
+            app_name=str(app_name),
+            page_name=str(page_name),
             source=source,
-            message="chunk を生成できなかったため skip しました。",
+            start_vector_index=int(start_vector_index),
+            chunk_options=chunk_options,
         )
 
-    chunk_texts = _build_chunk_texts(chunks)
-    if not chunk_texts:
-        return _build_ingest_result(
-            status="skip",
-            source=source,
-            message="有効な chunk テキストが存在しないため skip しました。",
+        # ---------------------------------------------------------------------
+        # append
+        # ---------------------------------------------------------------------
+        append_to_vectorstore(
+            databases_root=databases_root,
+            collection_id=str(source.collection_id),
+            shard_id=str(source.shard_id),
+            new_vectors=payload.new_vectors,
+            new_meta_records=payload.meta_records,
+            new_processed_record=payload.processed_record,
         )
 
-    # -------------------------------------------------------------------------
-    # page_start / page_end 計算
-    # -------------------------------------------------------------------------
-    chunk_page_ranges = _build_chunk_page_ranges(
-        chunks=chunks,
-        page_ranges=page_ranges,
-    )
-
-    # -------------------------------------------------------------------------
-    # embedding
-    # -------------------------------------------------------------------------
-    embed_res = run_embedding_for_chunks(
-        projects_root=projects_root,
-        user_sub=str(user_sub),
-        app_name=str(app_name),
-        page_name=str(page_name),
-        model_key=str(source.embed_model),
-        chunk_texts=chunk_texts,
-        feature=f"rag_ingest:{source.collection_id}",
-        meta={
-            "collection_id": str(source.collection_id),
-            "shard_id": str(source.shard_id),
-            "doc_id": str(source.doc_id),
-            "file_name": str(source.file_name),
-            "source_text_kind": str(source.source_text_kind),
-            "chunk_count": len(chunks),
-            "source_chars": len(str(ingest_text or "")),
-            "attrs": dict(source.attrs or {}),
-        },
-    )
-
-    if len(embed_res.vectors) != len(chunks):
+    except Exception as e:
         return _build_ingest_result(
             status="error",
             source=source,
-            message=(
-                "embedding 結果件数と chunk 件数が一致しません。"
-                f" chunk_count={len(chunks)}, vector_count={len(embed_res.vectors)}"
-            ),
-            chunk_count=len(chunks),
-            vector_count=len(embed_res.vectors),
+            message=f"ingest エラー: {e}",
         )
-
-    # -------------------------------------------------------------------------
-    # meta / processed 作成
-    # -------------------------------------------------------------------------
-    ingested_at = utc_now_iso_z()
-
-    start_vector_index = get_next_vector_index(
-        databases_root=databases_root,
-        collection_id=str(source.collection_id),
-        shard_id=str(source.shard_id),
-    )
-
-    meta_records = _build_meta_records(
-        source=source,
-        chunks=chunks,
-        chunk_page_ranges=chunk_page_ranges,
-        start_vector_index=start_vector_index,
-        ingested_at=ingested_at,
-    )
-
-    processed_record = build_processed_file_record(
-        source=source,
-        ingested_at=ingested_at,
-    )
-
-    # -------------------------------------------------------------------------
-    # vectors 変換
-    # -------------------------------------------------------------------------
-    new_vectors = np.asarray(embed_res.vectors, dtype=np.float32)
-
-    # -------------------------------------------------------------------------
-    # append
-    # -------------------------------------------------------------------------
-    append_to_vectorstore(
-        databases_root=databases_root,
-        collection_id=str(source.collection_id),
-        shard_id=str(source.shard_id),
-        new_vectors=new_vectors,
-        new_meta_records=meta_records,
-        new_processed_record=processed_record,
-    )
 
     # -------------------------------------------------------------------------
     # 完了
     # -------------------------------------------------------------------------
     msg = (
         "ingest 完了"
-        f" | chunks={len(meta_records)}"
-        f" | vectors={len(embed_res.vectors)}"
+        f" | chunks={len(payload.meta_records)}"
+        f" | vectors={len(payload.new_vectors)}"
         f" | model={source.embed_model}"
         f" | source={source.source_text_kind}"
     )
@@ -583,6 +671,6 @@ def ingest_one_document(
         status="ok",
         source=source,
         message=msg,
-        chunk_count=len(meta_records),
-        vector_count=len(embed_res.vectors),
+        chunk_count=len(payload.meta_records),
+        vector_count=len(payload.new_vectors),
     )

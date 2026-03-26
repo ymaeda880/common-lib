@@ -25,9 +25,11 @@
 #     - project_year
 #     - project_no
 #     - project_name
+#     - project_short_name
 #     - client_name
 #     - main_department
-#     - contract_amount  : 契約金額（円単位・INTEGER管理）
+#     - contract_amount   : 契約金額（円単位・INTEGER管理）
+#     - confidential_flag : 社内秘フラグ（0/1）
 #
 # (2) 登録・更新情報
 #     - input_user_id  : 初回登録者（CRUDで上書きしない）
@@ -63,7 +65,6 @@
 #     CRUDロジックは別モジュールで実装すること。
 # ============================================================
 
-
 # ------------------------------------------------------------
 # PDF確定ロック（pdf_lock_*）の設計ポリシー
 # ------------------------------------------------------------
@@ -78,7 +79,6 @@
 #
 # ------------------------------------------------------------
 
-
 # ------------------------------------------------------------
 # 契約金額（contract_amount）の設計ポリシー
 # ------------------------------------------------------------
@@ -90,6 +90,28 @@
 #
 # ------------------------------------------------------------
 
+# ------------------------------------------------------------
+# プロジェクト略称（project_short_name）の設計ポリシー
+# ------------------------------------------------------------
+#
+# - project_name とは別に、省略表示用の名称を保持する
+# - TEXT / NOT NULL
+# - 未入力状態は空文字で管理する
+# - 一覧表示・検索補助・UI省略表示での利用を想定する
+#
+# ------------------------------------------------------------
+
+# ------------------------------------------------------------
+# 社内秘フラグ（confidential_flag）の設計ポリシー
+# ------------------------------------------------------------
+#
+# - 0 / 1 の INTEGER で管理する
+# - 0 = 通常
+# - 1 = 社内秘
+# - NOT NULL
+# - 未設定状態は 0 で管理する
+#
+# ------------------------------------------------------------
 
 from __future__ import annotations
 
@@ -104,30 +126,31 @@ from pathlib import Path
 # ============================================================
 from common_lib.project_master.paths import get_project_master_db_path
 
-
 # ============================================================
 # DDL（projects）
 # ============================================================
 DDL_PROJECTS = """
 CREATE TABLE IF NOT EXISTS projects (
-    project_year        INTEGER NOT NULL,
-    project_no          TEXT    NOT NULL,
+    project_year            INTEGER NOT NULL,
+    project_no              TEXT    NOT NULL,
 
-    project_name        TEXT    NOT NULL DEFAULT '',
-    client_name         TEXT    NOT NULL DEFAULT '',
-    main_department     TEXT    NOT NULL DEFAULT '',
+    project_name            TEXT    NOT NULL DEFAULT '',
+    project_short_name      TEXT    NOT NULL DEFAULT '',
+    client_name             TEXT    NOT NULL DEFAULT '',
+    main_department         TEXT    NOT NULL DEFAULT '',
 
-    contract_amount     INTEGER NOT NULL DEFAULT 0,
+    contract_amount         INTEGER NOT NULL DEFAULT 0,
+    confidential_flag       INTEGER NOT NULL DEFAULT 0,
 
-    input_user_id       TEXT    NOT NULL,
-    input_date          TEXT    NOT NULL,
+    input_user_id           TEXT    NOT NULL,
+    input_date              TEXT    NOT NULL,
 
-    update_user_id      TEXT    NOT NULL,
-    update_date         TEXT    NOT NULL,
+    update_user_id          TEXT    NOT NULL,
+    update_date             TEXT    NOT NULL,
 
-    pdf_lock_flag       INTEGER NOT NULL DEFAULT 0,
-    pdf_locked_at       TEXT    NULL,
-    pdf_locked_by       TEXT    NULL,
+    pdf_lock_flag           INTEGER NOT NULL DEFAULT 0,
+    pdf_locked_at           TEXT    NULL,
+    pdf_locked_by           TEXT    NULL,
 
     -- --------------------------------------------------------
     -- 報告書PDFメタ（A案：projectsに保持）
@@ -159,7 +182,6 @@ CREATE INDEX IF NOT EXISTS idx_projects_pdf_lock_flag
 ON projects(pdf_lock_flag);
 """
 
-
 # ============================================================
 # helpers（db）
 # ============================================================
@@ -173,6 +195,9 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+# ============================================================
+# public（table exists）
+# ============================================================
 def table_exists(db_path: Path, *, table_name: str) -> bool:
     # ------------------------------------------------------------
     # テーブル存在確認

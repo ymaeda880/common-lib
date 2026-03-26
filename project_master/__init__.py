@@ -102,17 +102,10 @@ from common_lib.project_master.pdf_status_ops import (
 )
 
 from common_lib.project_master.processing_status_ops import (
-    # ------------------------------------------------------------
-    # processing status（text/processing_status.json）
-    # ------------------------------------------------------------
     PROCESSING_STATUS_FILENAME,
     PDF_KIND_TEXT,
     PDF_KIND_IMAGE,
-    RAG_STATUS_NOT_INGESTED,
-    RAG_STATUS_INGESTED,
-    RAG_STATUS_FAILED,
     ProcessingStatusRecord,
-    ProcessingStatusStateInfo,
     get_processing_status_path,
     read_processing_status,
     write_processing_status,
@@ -122,10 +115,6 @@ from common_lib.project_master.processing_status_ops import (
     mark_ocr_done,
     mark_text_extracted,
     mark_cleaned,
-    mark_rag_ingested,
-    mark_rag_failed,
-    get_processing_status_for_state,
-    is_rag_ingested,
     matches_source_pdf,
 )
 

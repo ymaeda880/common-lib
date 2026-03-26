@@ -29,9 +29,11 @@ class Project:
     # 基本情報
     # ------------------------------------------------------------
     project_name: str
+    project_short_name: str
     client_name: str
     main_department: str
-    contract_amount: int  # 円単位
+    contract_amount: int   # 円単位
+    confidential_flag: int  # 0 / 1
 
     # ------------------------------------------------------------
     # 監査/入力情報
@@ -73,9 +75,11 @@ class Project:
             project_no=str(row["project_no"]),
 
             project_name=str(row.get("project_name") or ""),
+            project_short_name=str(row.get("project_short_name") or ""),
             client_name=str(row.get("client_name") or ""),
             main_department=str(row.get("main_department") or ""),
             contract_amount=int(row.get("contract_amount") or 0),
+            confidential_flag=int(row.get("confidential_flag") or 0),
 
             input_user_id=str(row.get("input_user_id") or ""),
             input_date=str(row.get("input_date") or ""),
@@ -107,9 +111,11 @@ class Project:
             "project_no": str(self.project_no),
 
             "project_name": str(self.project_name),
+            "project_short_name": str(self.project_short_name),
             "client_name": str(self.client_name),
             "main_department": str(self.main_department),
             "contract_amount": int(self.contract_amount),
+            "confidential_flag": int(self.confidential_flag),
 
             "input_user_id": str(self.input_user_id),
             "input_date": str(self.input_date),

@@ -10,6 +10,7 @@
 #   - page_count 取得
 #   - processing_status.json 更新
 #   - text PDF のみ direct extract → text/report_raw.txt 保存
+#   - text PDF のみ report_raw_pages.json 保存
 # - 指定年度の全報告書PDFに対して上記を一括実行
 #
 # 方針：
@@ -28,7 +29,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
-import datetime as dt
 
 # ============================================================
 # imports（common_lib/project_master）
@@ -67,7 +67,6 @@ from common_lib.pdf_tools.text_extract.utils import (
 )
 from common_lib.pdf_tools.pages_json import (
     create_raw_pages_json,
-    get_report_raw_pages_json_path,
 )
 
 # ============================================================
@@ -147,22 +146,6 @@ def _get_report_raw_txt_path(*, text_dir: Path) -> Path:
     # ------------------------------------------------------------
     return text_dir / REPORT_RAW_TXT_NAME
 
-def _get_report_raw_pages_json_path(
-    *,
-    projects_root: Path,
-    project_year: int,
-    project_no: str,
-    role: str = "main",
-) -> Path:
-    # ------------------------------------------------------------
-    # raw pages json 正本パス
-    # ------------------------------------------------------------
-    return get_report_raw_pages_json_path(
-        projects_root,
-        project_year=int(project_year),
-        project_no=str(project_no),
-        role=role,
-    )
 
 # ============================================================
 # helpers（status / skip 判定）
@@ -196,6 +179,7 @@ def _is_processed_image_pdf(
         and _has_valid_page_count(page_count)
     )
 
+
 def _is_processed_text_pdf(
     *,
     current_sha256: str,
@@ -223,6 +207,7 @@ def _is_processed_text_pdf(
         and raw_pages_json_path.is_file()
     )
 
+
 # ============================================================
 # public（1件チェック）
 # ============================================================
@@ -243,6 +228,7 @@ def check_one_report_pdf(
     # - page_count 取得
     # - processing_status.json 更新
     # - text PDF のみ direct extract → report_raw.txt 保存
+    # - text PDF のみ report_raw_pages.json 保存
     #
     # やらないこと：
     # - OCR
@@ -274,13 +260,7 @@ def check_one_report_pdf(
     _require_existing_dir(dir_path=text_dir, name="text_dir")
 
     raw_txt_path = _get_report_raw_txt_path(text_dir=text_dir)
-
-    raw_pages_json_path = _get_report_raw_pages_json_path(
-        projects_root=projects_root,
-        project_year=int(y),
-        project_no=str(pno3),
-        role=role,
-    )
+    raw_pages_json_path = text_dir / "report_raw_pages.json"
 
     rec = read_processing_status(
         projects_root,
@@ -298,7 +278,6 @@ def check_one_report_pdf(
         raw_txt_path=raw_txt_path,
         raw_pages_json_path=raw_pages_json_path,
     ):
-
         return ReportCheckItemResult(
             project_year=int(y),
             project_no=str(pno3),
@@ -392,13 +371,13 @@ def check_one_report_pdf(
             page_texts.append(str(one_page_text or ""))
 
         create_raw_pages_json(
-            projects_root,
-            project_year=int(y),
-            project_no=str(pno3),
+            raw_pages_json_path,
+            collection_id="project",
+            shard_id=str(int(y)),
+            doc_id=f"{int(y):04d}-{str(pno3)}",
             pdf_filename=str(pdf_filename),
             source_pdf_sha256=str(pdf_sha256),
             pages_text_list=page_texts,
-            role=role,
         )
 
         mark_text_extracted(
@@ -421,7 +400,6 @@ def check_one_report_pdf(
             message="text PDF を判定し、page_count取得・text抽出・report_raw_pages.json 作成を実行しました。",
             error_message=None,
         )
-
 
     # ------------------------------------------------------------
     # image PDF の場合：ここでは OCR しない

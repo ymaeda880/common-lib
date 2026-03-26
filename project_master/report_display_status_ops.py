@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # common_lib/project_master/report_display_status_ops.py
 # ============================================================
 # Project Master: 報告書表示状態集約オペレーション（正本API）
@@ -10,7 +11,6 @@
 # - pdf_kind
 # - page_count / 表示用 page_count_display
 # - ocr_done
-# - rag_status / rag_ingested_at / rag_ingested_by
 # - lock_flag
 # - raw_exists / clean_exists
 # - ok_ready
@@ -18,6 +18,11 @@
 # ■ OK条件（正本）
 # - text PDF  + raw text あり + lock済み
 # - image PDF + clean textあり + lock済み
+#
+# ■ 重要方針
+# - RAG取り込み状態は本モジュールでは扱わない
+# - RAG取込済み判定の正本は processed_files.json 側とし、
+#   必要なページで別途判定する
 # ============================================================
 
 from __future__ import annotations
@@ -57,10 +62,6 @@ class ReportDisplayStatus:
     page_count: int | None
     page_count_display: str
     ocr_done: bool
-
-    rag_status: str | None
-    rag_ingested_at: str | None
-    rag_ingested_by: str | None
 
     lock_flag: int
 
@@ -117,30 +118,6 @@ def _is_ocr_done_from_record(rec) -> bool:
     return bool(getattr(rec, "ocr_done", False))
 
 
-def _rag_status_from_record(rec) -> str | None:
-    # ------------------------------------------------------------
-    # RAG状態
-    # ------------------------------------------------------------
-    v = str(getattr(rec, "rag_status", "") or "").strip().lower()
-    return v or None
-
-
-def _rag_at_from_record(rec) -> str | None:
-    # ------------------------------------------------------------
-    # RAG日時
-    # ------------------------------------------------------------
-    v = str(getattr(rec, "rag_ingested_at", "") or "").strip()
-    return v or None
-
-
-def _rag_by_from_record(rec) -> str | None:
-    # ------------------------------------------------------------
-    # RAG実行者
-    # ------------------------------------------------------------
-    v = str(getattr(rec, "rag_ingested_by", "") or "").strip()
-    return v or None
-
-
 def _is_ok_ready(
     pdf_kind: str,
     lock_flag: int,
@@ -185,10 +162,6 @@ def build_report_display_status(
     page_count_display = _page_count_display_from_record(rec)
     ocr_done = _is_ocr_done_from_record(rec)
 
-    rag_status = _rag_status_from_record(rec)
-    rag_ingested_at = _rag_at_from_record(rec)
-    rag_ingested_by = _rag_by_from_record(rec)
-
     raw_exists = exists_text_raw(
         projects_root,
         project_year=project_year,
@@ -218,9 +191,6 @@ def build_report_display_status(
         page_count=page_count,
         page_count_display=page_count_display,
         ocr_done=ocr_done,
-        rag_status=rag_status,
-        rag_ingested_at=rag_ingested_at,
-        rag_ingested_by=rag_ingested_by,
         lock_flag=lock_flag,
         raw_exists=raw_exists,
         clean_exists=clean_exists,
