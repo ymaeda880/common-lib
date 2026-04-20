@@ -16,7 +16,6 @@
 # - usage は extract_embedding_token_usage を使う
 # - cost は apply_embedding_result_to_busy を使う
 # - 返却値は EmbeddingRunResult にまとめる
-# - 1回の request 上限を超えないよう、安全側で batch 分割する
 # =============================================================================
 
 from __future__ import annotations
@@ -25,10 +24,9 @@ from __future__ import annotations
 # imports
 # =============================================================================
 from pathlib import Path
-from typing import List, Sequence
+from typing import Any, Iterable, List, Sequence, Tuple
 
 from .models import EmbeddingRunResult
-from .chunk_ops import estimate_token_count
 
 # =============================================================================
 # common_lib.busy
@@ -110,72 +108,6 @@ def _calc_vector_dimension(vectors: list[list[float]]) -> int:
 
 
 # =============================================================================
-# batching
-# =============================================================================
-EMBEDDING_MAX_INPUT_TOKENS_PER_REQUEST = 300_000
-EMBEDDING_SAFE_INPUT_TOKENS_PER_REQUEST = 120_000
-EMBEDDING_MAX_ITEMS_PER_REQUEST = 48
-
-
-def split_inputs_for_embedding(
-    inputs: Sequence[str],
-    *,
-    max_input_tokens_per_request: int = EMBEDDING_SAFE_INPUT_TOKENS_PER_REQUEST,
-    max_items_per_request: int = EMBEDDING_MAX_ITEMS_PER_REQUEST,
-) -> list[list[str]]:
-    # -----------------------------------------------------------------------------
-    # embedding 入力列を、安全な token 合計単位で複数バッチに分割する
-    #
-    # 方針：
-    # - estimate_token_count() の近似値で合計 token を管理
-    # - 1リクエストの token 上限に余裕を持たせる
-    # - 件数上限でも分割する
-    # - 単独でも上限を超える巨大入力はそのまま1件バッチで返す
-    #   （その場合は upstream の chunk 設計側を見直す）
-    # -----------------------------------------------------------------------------
-    out: list[list[str]] = []
-    buf: list[str] = []
-    buf_tokens = 0
-
-    safe_limit = max(1, int(max_input_tokens_per_request))
-    item_limit = max(1, int(max_items_per_request))
-
-    for x in inputs:
-        s = str(x or "")
-        if not s.strip():
-            continue
-
-        est = estimate_token_count(s)
-
-        # ------------------------------------------------------------
-        # 現在バッファに積むと上限超過、または件数上限なら先に確定
-        # ------------------------------------------------------------
-        if buf and (
-            (buf_tokens + est > safe_limit) or
-            (len(buf) >= item_limit)
-        ):
-            out.append(buf)
-            buf = []
-            buf_tokens = 0
-
-        # ------------------------------------------------------------
-        # 単独巨大入力
-        # - buf が空のときだけそのまま単独バッチ化
-        # ------------------------------------------------------------
-        if not buf and est > safe_limit:
-            out.append([s])
-            continue
-
-        buf.append(s)
-        buf_tokens += est
-
-    if buf:
-        out.append(buf)
-
-    return out
-
-
-# =============================================================================
 # main
 # =============================================================================
 def run_embedding(
@@ -248,69 +180,41 @@ def run_embedding(
         ) as br:
             run_id = br.run_id
 
-            # -----------------------------------------------------------------
-            # batching
-            # - 1回で全件送らず、安全な token 合計ごとに分割する
-            # -----------------------------------------------------------------
-            input_batches = split_inputs_for_embedding(norm_inputs)
+            res = embed_text(
+                provider=provider,
+                model=model,
+                inputs=norm_inputs,
+            )
 
-            if not input_batches:
-                raise ValueError("embedding 対象テキストが空です。")
+            vectors: List[List[float]] = getattr(res, "vectors", []) or []
+            dim = _calc_vector_dimension(vectors)
 
-            vectors: List[List[float]] = []
-            dim = 0
-            total_in_tokens = 0
+            # -----------------------------------------------------------------
+            # token usage（推計しない）
+            # -----------------------------------------------------------------
+            tu = extract_embedding_token_usage(
+                res=res,
+                provider=str(provider),
+            )
+
+            in_tokens = tu.input_tokens
             out_tokens = None
-            last_cost_obj = None
 
-            for batch_index, batch_inputs in enumerate(input_batches, start=1):
-                res = embed_text(
-                    provider=provider,
-                    model=model,
-                    inputs=batch_inputs,
-                )
-
-                batch_vectors: List[List[float]] = getattr(res, "vectors", []) or []
-                if batch_vectors:
-                    vectors.extend(batch_vectors)
-                    if dim <= 0:
-                        dim = _calc_vector_dimension(batch_vectors)
-
-                # -------------------------------------------------------------
-                # token usage（推計しない）
-                # -------------------------------------------------------------
-                tu = extract_embedding_token_usage(
-                    res=res,
-                    provider=str(provider),
-                )
-                if isinstance(tu.input_tokens, int):
-                    total_in_tokens += int(tu.input_tokens)
-
-                # -------------------------------------------------------------
-                # cost（推計しない）
-                # - busy 側には各 batch ごとに反映
-                # -------------------------------------------------------------
-                pp_cost = apply_embedding_result_to_busy(
-                    br=br,
-                    res=res,
-                    note_ok_cost=f"ok_cost_batch_{batch_index}",
-                    note_no_cost=f"no_cost_batch_{batch_index}",
-                )
-                last_cost_obj = getattr(pp_cost, "cost_obj", None)
-
-            # -----------------------------------------------------------------
-            # busy usage（合計値を最後に一度だけ反映）
-            # -----------------------------------------------------------------
-            in_tokens = total_in_tokens if total_in_tokens > 0 else None
-
+            # busy に input token だけ反映できる実装がある場合のみ使う
             if isinstance(in_tokens, int) and hasattr(br, "set_usage_input_only"):
                 br.set_usage_input_only(int(in_tokens))
 
-            br.add_finish_meta(
-                note="ok",
-                n_batches=len(input_batches),
-                n_vectors=len(vectors),
+            # -----------------------------------------------------------------
+            # cost（推計しない）
+            # -----------------------------------------------------------------
+            pp_cost = apply_embedding_result_to_busy(
+                br=br,
+                res=res,
+                note_ok_cost="ok_cost",
+                note_no_cost="no_cost",
             )
+
+            br.add_finish_meta(note="ok")
 
     except Exception as e:
         raise RuntimeError(f"embedding 実行エラー: {e}") from e
@@ -324,7 +228,7 @@ def run_embedding(
         run_id=str(run_id) if run_id is not None else None,
         in_tokens=in_tokens if isinstance(in_tokens, int) else None,
         out_tokens=out_tokens,
-        cost_obj=last_cost_obj,
+        cost_obj=getattr(pp_cost, "cost_obj", None),
     )
 
 
