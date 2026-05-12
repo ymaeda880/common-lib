@@ -7,7 +7,15 @@ import sqlite3
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any
 
-from ..inbox_common.paths import ensure_user_dirs, items_db_path, resolve_file_path
+from ..inbox_common.paths import (
+    ensure_user_dirs,
+    items_db_path,
+    resolve_file_path,
+    preview_dir_for_item,
+)
+
+import shutil
+
 
 
 def _fetch_item_row(items_db: Path, item_id: str) -> Optional[Dict[str, Any]]:
@@ -59,7 +67,20 @@ def delete_item(inbox_root: Path, user_sub: str, item_id: str) -> Tuple[bool, st
             if t.exists():
                 t.unlink()
 
-        # 3) DB行削除
+        # 3) プレビュー派生物削除（あれば）
+        kind = str(row.get("kind") or "").lower()
+
+        preview_dir = preview_dir_for_item(
+            inbox_root,
+            user_sub,
+            kind,
+            item_id,
+        )
+
+        if preview_dir.exists() and preview_dir.is_dir():
+            shutil.rmtree(preview_dir)
+
+        # 4) DB行削除
         _delete_item_row(items_db, item_id)
 
         return True, f"削除しました: {item_id}"

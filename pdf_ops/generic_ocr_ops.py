@@ -5,14 +5,18 @@
 #
 # 役割：
 # - generic PDF に対する OCR 実行
-# - OCR済みPDFの保存
+# - OCR済みPDFの保存（Tesseract OCR の場合）
+# - GPT OCR（OpenAI Vision）の実行
 # - raw text / clean text / extract_meta.json の保存
 # - clean後ページテキストの report_clean_pages.json 保存
 # - text/processing_status.json の更新
+# - GPT OCR の ai_results を返す
+# - ページ単位 progress_callback を呼ぶ
 #
 # 設計方針：
 # - path解決は common_lib.pdf_catalog を正本として使う
 # - OCR / text抽出のエンジン本体は common_lib.pdf_tools.text_extract.extract を使う
+# - GPT OCR は common_lib.ai.routing.call_vision_text を使う
 # - OCR時に clean を行う場合は、clean後ページ単位テキストから
 #   report_clean_pages.json を作成する
 # - 判定・処理状態の正本は text/processing_status.json
@@ -28,6 +32,7 @@ import datetime as dt
 import json
 import shutil
 from pathlib import Path
+from typing import Any
 
 # ============================================================
 # imports（pdf_catalog）
@@ -68,6 +73,13 @@ from common_lib.pdf_tools.text_clean import (
 from common_lib.pdf_tools.pages_json import (
     create_clean_pages_json,
 )
+
+from common_lib.pdf_tools.gpt_ocr import run_gpt_ocr_by_page
+
+# ============================================================
+# imports（common_lib/ai）
+# ============================================================
+from common_lib.ai.routing import call_vision_text
 
 # ============================================================
 # constants（text artifacts）
@@ -138,7 +150,7 @@ def _clear_dir_contents_strict(*, dir_path: Path, name: str) -> None:
                 shutil.rmtree(p)
             else:
                 p.unlink()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             raise RuntimeError(
                 f"{name} 配下の削除に失敗しました（事故防止のため握りません）。 "
                 f"dir={dir_path} failed_entry={p}"
@@ -263,6 +275,59 @@ def _extract_text_from_pdf_bytes_by_page(
 
 
 # ============================================================
+# helpers（Tesseract page OCR）
+# ============================================================
+def _run_tesseract_ocr_by_page(
+    *,
+    fitz,
+    pdf_bytes: bytes,
+    page_count_total: int,
+    ocr_lang: str,
+    ocr_dpi: int,
+    progress_callback=None,
+) -> tuple[list[str], bytes]:
+    # ------------------------------------------------------------
+    # Tesseract OCR をページごとに実行する
+    # - ページごとに progress_callback を呼ぶ
+    # - 1ページOCR済みPDFを結合して、OCR済みPDF bytesも返す
+    # ------------------------------------------------------------
+    raw_page_texts: list[str] = []
+
+    out_doc = fitz.open()
+    try:
+        for page_no in range(1, int(page_count_total) + 1):
+            one_ocr_pdf_bytes = build_ocr_pdf_bytes(
+                fitz=fitz,
+                pdf_bytes=pdf_bytes,
+                page_start_0=int(page_no) - 1,
+                page_end_0_inclusive=int(page_no) - 1,
+                ocr_lang=str(ocr_lang or "jpn+eng"),
+                ocr_dpi=int(ocr_dpi),
+            )
+
+            one_doc = fitz.open(stream=one_ocr_pdf_bytes, filetype="pdf")
+            try:
+                out_doc.insert_pdf(one_doc)
+            finally:
+                one_doc.close()
+
+            one_text = extract_text_from_pdf_bytes(
+                fitz=fitz,
+                pdf_bytes=one_ocr_pdf_bytes,
+                page_start_0=0,
+                page_end_0_inclusive=0,
+            )
+            raw_page_texts.append(str(one_text or ""))
+
+            if progress_callback is not None:
+                progress_callback(int(page_no), int(page_count_total))
+
+        return raw_page_texts, out_doc.tobytes()
+    finally:
+        out_doc.close()
+
+
+# ============================================================
 # helpers（meta）
 # ============================================================
 def _build_extract_meta_obj(
@@ -277,6 +342,8 @@ def _build_extract_meta_obj(
     pages_processed: int,
     used_ocr: bool,
     ocr_lang: str,
+    ocr_method: str,
+    gpt_model: str,
     started_at: str,
     finished_at: str,
     status: str,
@@ -299,6 +366,8 @@ def _build_extract_meta_obj(
             "pages_processed": int(pages_processed),
             "used_ocr": bool(used_ocr),
             "ocr_lang": str(ocr_lang or ""),
+            "ocr_method": str(ocr_method or ""),
+            "gpt_model": str(gpt_model or ""),
             "started_at": str(started_at or ""),
             "finished_at": str(finished_at or ""),
             "status": str(status or ""),
@@ -338,8 +407,8 @@ def _build_default_clean_options() -> CleanOptions:
 def _call_optional_status_op(name: str, **kwargs) -> None:
     # ------------------------------------------------------------
     # generic processing_status_ops に実装があれば呼ぶ
-    # - 現時点で mark_ocr_done / mark_cleaned の有無が未確認のため
-    #   無ければ no-op とする
+    # - mark_ocr_done / mark_cleaned があれば呼ぶ
+    # - 無ければ no-op
     # ------------------------------------------------------------
     fn = getattr(generic_status_ops, name, None)
     if callable(fn):
@@ -359,17 +428,30 @@ def run_generic_ocr_pipeline(
     done_by: str,
     ocr_lang: str = "jpn+eng",
     do_clean_text: bool = True,
+    method: str = "gpt_vision",
+    gpt_model: str = "gpt-4.1-mini",
+    gpt_max_output_tokens: int | None = 4000,
+    progress_callback=None,
 ) -> dict[str, object]:
     # ------------------------------------------------------------
     # generic PDF 1件に対して OCR / text抽出 / clean保存 を実行する
     #
+    # method:
+    # - gpt_vision
+    # - pymupdf_tesseract
+    #
     # 出力：
-    # - ocr/<stem>_ocr.pdf        （image PDF の場合）
     # - text/report_raw.txt
-    # - text/report_clean.txt     （do_clean_text=True の場合）
+    # - text/report_clean.txt
+    # - text/report_clean_pages.json
     # - text/extract_meta.json
     # - text/processing_status.json 更新
+    # - ocr/<stem>_ocr.pdf（Tesseract OCR の場合）
     # ------------------------------------------------------------
+    method_key = str(method or "gpt_vision").strip()
+    if method_key not in ("gpt_vision", "pymupdf_tesseract"):
+        raise RuntimeError(f"OCR方式が不正です。 method={method_key}")
+
     ensure_doc_layout_dirs(
         archive_root,
         collection_id=collection_id,
@@ -483,6 +565,14 @@ def run_generic_ocr_pipeline(
 
     started_at = dt.datetime.now().replace(microsecond=0).isoformat()
 
+    raw_text = ""
+    raw_page_texts: list[str] = []
+    ai_results: list[Any] = []
+    used_ocr = False
+    ocr_pdf_filename = ""
+    clean_applied = False
+    cleaned_at: str | None = None
+
     try:
         # --------------------------------------------------------
         # 派生物を厳格全消し
@@ -516,7 +606,7 @@ def run_generic_ocr_pipeline(
                 page_start_0=0,
                 page_end_0_inclusive=max(0, page_count_total - 1),
             )
-            raw_page_texts: list[str] = []
+            raw_page_texts = []
             used_ocr = False
             ocr_pdf_filename = ""
 
@@ -524,30 +614,44 @@ def run_generic_ocr_pipeline(
         # image PDF：OCR 実行
         # --------------------------------------------------------
         elif pdfkind == "image":
-            ocr_pdf_bytes = build_ocr_pdf_bytes(
-                fitz=fitz,
-                pdf_bytes=pdf_bytes,
-                page_start_0=0,
-                page_end_0_inclusive=max(0, page_count_total - 1),
-                ocr_lang=str(ocr_lang or "jpn+eng"),
-                ocr_dpi=300,
-            )
+            if method_key == "gpt_vision":
+                raw_page_texts, ai_results = run_gpt_ocr_by_page(
+                    fitz=fitz,
+                    pdf_bytes=pdf_bytes,
+                    page_count_total=int(page_count_total),
+                    gpt_model=str(gpt_model or "gpt-4.1-mini"),
+                    gpt_max_output_tokens=gpt_max_output_tokens,
+                    render_dpi=300,
+                    progress_callback=progress_callback,
+                )
 
-            ocr_pdf_path = _get_report_ocr_pdf_path(
-                ocr_dir=ocr_dir,
-                original_pdf_filename=str(target_pdf_path.name),
-            )
-            _atomic_write_bytes(ocr_pdf_path, ocr_pdf_bytes)
+                raw_text = _join_pages_text(raw_page_texts)
+                used_ocr = True
+                ocr_pdf_filename = ""
 
-            raw_page_texts = _extract_text_from_pdf_bytes_by_page(
-                fitz=fitz,
-                pdf_bytes=ocr_pdf_bytes,
-                page_count_total=int(page_count_total),
-            )
-            raw_text = _join_pages_text(raw_page_texts)
+            elif method_key == "pymupdf_tesseract":
+                raw_page_texts, ocr_pdf_bytes = _run_tesseract_ocr_by_page(
+                    fitz=fitz,
+                    pdf_bytes=pdf_bytes,
+                    page_count_total=int(page_count_total),
+                    ocr_lang=str(ocr_lang or "jpn+eng"),
+                    ocr_dpi=300,
+                    progress_callback=progress_callback,
+                )
 
-            used_ocr = True
-            ocr_pdf_filename = str(ocr_pdf_path.name)
+                raw_text = _join_pages_text(raw_page_texts)
+
+                ocr_pdf_path = _get_report_ocr_pdf_path(
+                    ocr_dir=ocr_dir,
+                    original_pdf_filename=str(target_pdf_path.name),
+                )
+                _atomic_write_bytes(ocr_pdf_path, ocr_pdf_bytes)
+
+                used_ocr = True
+                ocr_pdf_filename = str(ocr_pdf_path.name)
+
+            else:
+                raise RuntimeError(f"OCR方式が不正です。 method={method_key}")
 
             _call_optional_status_op(
                 "mark_ocr_done",
@@ -579,9 +683,6 @@ def run_generic_ocr_pipeline(
         # - OCR時に clean を行う場合は、ページ単位 clean 結果から
         #   report_clean.txt / report_clean_pages.json を作る
         # --------------------------------------------------------
-        clean_applied = False
-        cleaned_at: str | None = None
-
         if bool(do_clean_text):
             clean_options = _build_default_clean_options()
 
@@ -641,6 +742,8 @@ def run_generic_ocr_pipeline(
             pages_processed=int(page_count_total),
             used_ocr=bool(used_ocr),
             ocr_lang=str(ocr_lang or ""),
+            ocr_method=str(method_key),
+            gpt_model=str(gpt_model or "") if method_key == "gpt_vision" else "",
             started_at=str(started_at),
             finished_at=str(finished_at),
             status="ok",
@@ -658,15 +761,18 @@ def run_generic_ocr_pipeline(
             "pdf_kind": str(pdfkind),
             "page_count": int(page_count_total),
             "used_ocr": bool(used_ocr),
+            "ocr_method": str(method_key),
+            "gpt_model": str(gpt_model or "") if method_key == "gpt_vision" else "",
             "raw_text_path": str(raw_txt_path),
             "clean_text_path": str(clean_txt_path) if clean_applied else None,
             "extract_meta_path": str(meta_path),
             "ocr_pdf_filename": str(ocr_pdf_filename),
             "clean_applied": bool(clean_applied),
             "processing_status_path": str(processing_status_path),
+            "ai_results": list(ai_results),
         }
 
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         finished_at = dt.datetime.now().replace(microsecond=0).isoformat()
 
         meta_obj = _build_extract_meta_obj(
@@ -674,12 +780,14 @@ def run_generic_ocr_pipeline(
             source_pdf_sha256=str(pdf_sha256),
             raw_text_filename=REPORT_RAW_TXT_NAME,
             clean_text_filename="",
-            ocr_pdf_filename="",
+            ocr_pdf_filename=str(ocr_pdf_filename or ""),
             pdf_kind=str(pdfkind),
             page_count_total=int(page_count_total),
             pages_processed=int(page_count_total),
             used_ocr=bool(pdfkind == "image"),
             ocr_lang=str(ocr_lang or ""),
+            ocr_method=str(method_key),
+            gpt_model=str(gpt_model or "") if method_key == "gpt_vision" else "",
             started_at=str(started_at),
             finished_at=str(finished_at),
             status="error",
@@ -717,14 +825,23 @@ def run_generic_ocr_pipeline_for_selected_docs(
     ocr_lang: str = "jpn+eng",
     do_clean_text: bool = True,
     force_rerun: bool = False,
-) -> tuple[str, list[str]]:
+    method: str = "gpt_vision",
+    gpt_model: str = "gpt-4.1-mini",
+    gpt_max_output_tokens: int | None = 4000,
+    progress_callback=None,
+) -> tuple[str, list[str], list[Any]]:
     # ------------------------------------------------------------
     # generic PDF 複数件に対して OCR / text抽出 / clean保存 を実行する
+    #
+    # 戻り値：
+    # - msg
+    # - error_lines
+    # - all_ai_results（GPT OCR の場合）
     # ------------------------------------------------------------
     target_doc_ids = set(str(x) for x in (selected_doc_ids or []))
 
     if not target_doc_ids:
-        return "OCR実行: 対象 0 件", []
+        return "OCR実行: 対象 0 件", [], []
 
     records = list_source_pdfs_by_shard(
         archive_root,
@@ -735,6 +852,7 @@ def run_generic_ocr_pipeline_for_selected_docs(
     ok_count = 0
     skip_count = 0
     error_lines: list[str] = []
+    all_ai_results: list[Any] = []
 
     for rec in records:
         try:
@@ -763,7 +881,7 @@ def run_generic_ocr_pipeline_for_selected_docs(
                         skip_count += 1
                         continue
 
-            run_generic_ocr_pipeline(
+            res = run_generic_ocr_pipeline(
                 archive_root,
                 collection_id=str(collection_id),
                 shard_id=str(shard_id),
@@ -772,11 +890,17 @@ def run_generic_ocr_pipeline_for_selected_docs(
                 done_by=str(done_by),
                 ocr_lang=str(ocr_lang or "jpn+eng"),
                 do_clean_text=bool(do_clean_text),
+                method=str(method or "gpt_vision"),
+                gpt_model=str(gpt_model or "gpt-4.1-mini"),
+                gpt_max_output_tokens=gpt_max_output_tokens,
+                progress_callback=progress_callback,
             )
+
+            all_ai_results.extend(list(res.get("ai_results") or []))
             ok_count += 1
 
         except Exception as e:
             error_lines.append(f"{rec.doc_id} | {e}")
 
     msg = f"OCR実行: ok {ok_count} 件 / skip {skip_count} 件 / error {len(error_lines)} 件"
-    return msg, error_lines
+    return msg, error_lines, all_ai_results

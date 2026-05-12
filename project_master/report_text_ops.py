@@ -32,6 +32,8 @@ from common_lib.project_master import get_report_pdf_path
 TEXT_RAW_FILENAME = "report_raw.txt"
 TEXT_CLEAN_FILENAME = "report_clean.txt"
 
+TEXT_RAW_PAGES_JSON_FILENAME = "report_raw_pages.json"
+TEXT_CLEAN_PAGES_JSON_FILENAME = "report_clean_pages.json"
 
 # ============================================================
 # text dir / path
@@ -95,6 +97,46 @@ def get_text_clean_path(
         return None
     return text_dir / TEXT_CLEAN_FILENAME
 
+
+
+def get_text_raw_pages_json_path(
+    projects_root: Path,
+    project_year: int,
+    project_no: str,
+    role: str = "main",
+) -> Path | None:
+    # ------------------------------------------------------------
+    # raw pages json path
+    # ------------------------------------------------------------
+    text_dir = get_report_text_dir(
+        projects_root,
+        project_year=project_year,
+        project_no=project_no,
+        role=role,
+    )
+    if text_dir is None:
+        return None
+    return text_dir / TEXT_RAW_PAGES_JSON_FILENAME
+
+
+def get_text_clean_pages_json_path(
+    projects_root: Path,
+    project_year: int,
+    project_no: str,
+    role: str = "main",
+) -> Path | None:
+    # ------------------------------------------------------------
+    # clean pages json path
+    # ------------------------------------------------------------
+    text_dir = get_report_text_dir(
+        projects_root,
+        project_year=project_year,
+        project_no=project_no,
+        role=role,
+    )
+    if text_dir is None:
+        return None
+    return text_dir / TEXT_CLEAN_PAGES_JSON_FILENAME
 
 # ============================================================
 # exists

@@ -159,9 +159,15 @@ def _normalize_doc_id(doc_id: object) -> str:
 
 def _projects_root_from_archive_root(archive_root: Path) -> Path:
     # -------------------------------------------------------------------------
-    # archive_root（.../Archive）から PROJECTS_ROOT を得る
+    # archive_root から PROJECTS_ROOT を逆算しない
+    #
+    # external Archive の場合、
+    # /Volumes/.../Archive の parent は PROJECTS_ROOT ではない。
+    #
+    # generic ingest では archive_root を正本とし、
+    # 相対pathを再結合しない。
     # -------------------------------------------------------------------------
-    return Path(archive_root).parent
+    return Path(archive_root)
 
 
 def _generic_collection_root(archive_root: Path, collection_id: str) -> Path:
@@ -547,7 +553,19 @@ def resolve_generic_pdf_source(
             sha256=sha256 or None,
         )
 
-    source_text_abs = projects_root / source_text_relpath
+    source_text_abs = (
+        Path(archive_root)
+        / str(collection_id)
+        / str(shard_id)
+        / str(doc_id)
+        / "text"
+        / (
+            REPORT_CLEAN_TXT_NAME
+            if source_text_kind == "clean"
+            else REPORT_RAW_TXT_NAME
+        )
+    )
+
     if not source_text_abs.exists():
         return GenericSourceResolveResult(
             ok=False,
@@ -605,7 +623,19 @@ def resolve_generic_pdf_source(
             sha256=sha256 or None,
         )
 
-    source_pages_abs = projects_root / source_pages_relpath
+    source_pages_abs = (
+        Path(archive_root)
+        / str(collection_id)
+        / str(shard_id)
+        / str(doc_id)
+        / "text"
+        / (
+            REPORT_CLEAN_PAGES_JSON_NAME
+            if source_text_kind == "clean"
+            else REPORT_RAW_PAGES_JSON_NAME
+        )
+    )
+
     if not source_pages_abs.exists():
         return GenericSourceResolveResult(
             ok=False,

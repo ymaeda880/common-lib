@@ -86,6 +86,39 @@ def call_text_stream(
 
 
 # ============================================================
+# VISION TEXT
+# ============================================================
+def call_vision_text(
+    *,
+    provider: Provider,
+    model: str,
+    image_bytes: bytes,
+    prompt: str,
+    system: Optional[str] = None,
+    max_output_tokens: Optional[int] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> TextResult:
+    if not image_bytes:
+        raise InvalidRequestError("image_bytes is empty")
+
+    if not prompt or not str(prompt).strip():
+        raise InvalidRequestError("prompt is empty")
+
+    if provider == "openai":
+        from .tasks.text import openai_call_vision_text
+        return openai_call_vision_text(
+            model=model,
+            image_bytes=image_bytes,
+            prompt=prompt,
+            system=system,
+            max_output_tokens=max_output_tokens,
+            extra=extra,
+        )
+
+    raise InvalidRequestError(f"vision text not supported provider: {provider}")
+
+
+# ============================================================
 # IMAGE
 # ============================================================
 def generate_image(

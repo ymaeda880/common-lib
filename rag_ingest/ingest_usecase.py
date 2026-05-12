@@ -42,6 +42,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from common_lib.storage.external_ssd_root import resolve_storage_subdir_root_v2
+
 import numpy as np
 
 from .chunk_ops import ChunkOptions, chunk_text
@@ -150,10 +152,20 @@ def _resolve_source_pages_abs_path(
     if not rel:
         raise RuntimeError("source.source_pages_path が空です。")
 
-    if str(source.collection_id) == "project":
-        return Path(projects_root) / "Archive" / "project" / rel
+    archive_root = resolve_storage_subdir_root_v2(
+        Path(projects_root),
+        subdir="Archive",
+        role="main",
+    )
 
-    return Path(projects_root) / rel
+    if str(source.collection_id) == "project":
+        return archive_root / "project" / rel
+
+    if rel.startswith("Archive/"):
+        rel = rel[len("Archive/"):]
+
+    return archive_root / rel
+
 
 
 def _load_pages_json(
@@ -247,9 +259,14 @@ def _build_source_text_and_page_ranges_from_pages(
         if page_no <= 0:
             continue
 
-        if i > 0:
-            full_text_parts.append("\n")
-            cursor += 1
+        # if i > 0:
+        #     full_text_parts.append("\n")
+        #     cursor += 1
+        # ------------------------------------------------------------
+        # ページ間には文字を追加しない
+        # ------------------------------------------------------------
+        # pages[].text の文字位置と page_ranges の cursor を一致させるため、
+        # ここでは改行などの区切り文字を挿入しない。
 
         start = int(cursor)
         full_text_parts.append(page_text)

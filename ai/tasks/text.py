@@ -200,3 +200,36 @@ def gemini_call_text(
     res = _fill_text_cost_if_missing(res=res, model=str(model))
 
     return res
+
+# ============================================================
+# OpenAI（Vision Text）
+# ============================================================
+def openai_call_vision_text(
+    *,
+    model: str,
+    image_bytes: bytes,
+    prompt: str,
+    system: Optional[str],
+    max_output_tokens: Optional[int],
+    extra: Optional[Dict[str, Any]],
+) -> TextResult:
+    # ------------------------------------------------------------
+    # OpenAI Vision Text 実行
+    # ------------------------------------------------------------
+    from ..providers.openai.vision_responses_create import call_vision_responses_create
+
+    res = call_vision_responses_create(
+        model=model,
+        image_bytes=image_bytes,
+        prompt=prompt,
+        system=system,
+        max_output_tokens=max_output_tokens,
+        extra=extra,
+    )
+
+    # ------------------------------------------------------------
+    # cost（正本）：usage が取れていて cost が無い場合のみ埋める
+    # ------------------------------------------------------------
+    res = _fill_text_cost_if_missing(res=res, model=str(model))
+
+    return res

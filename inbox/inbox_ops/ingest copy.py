@@ -1,11 +1,16 @@
 # -*- coding: utf-8 -*-
-# common_lib/inbox/inbox_ops/ingest.py
+# common_lib/inbox_ops/ingest.py
+#
+# ✅ 他アプリ → Inbox 保存（正本API）
+# - common_lib だけに依存（auth_portal_app の lib/ に依存しない）
+# - Inbox未存在 / 容量超過 を例外で通知（UI側で st.warning 等にする）
+# - サムネは image のみ（ensure_thumb_for_item が方針を担保）
 
 from __future__ import annotations
 
 from pathlib import Path
 import uuid
-import unicodedata
+
 
 from common_lib.inbox.inbox_common.types import (
     IngestRequest,
@@ -37,11 +42,13 @@ from common_lib.inbox.inbox_ops.quota import (
     quota_bytes_for_user,
 )
 
+# ✅ サムネ正本（imageのみ作る／他は none に揃える）
 from common_lib.inbox.inbox_ops.thumb import (
     ensure_thumb_for_item,
     THUMB_W,
     THUMB_H,
 )
+
 
 
 def ingest_to_inbox(
@@ -51,24 +58,25 @@ def ingest_to_inbox(
 ) -> IngestResult:
     """
     他アプリ → Inbox 保存の正本API（UIなし）
+    - 失敗時は例外（UI側で捕捉して warning/error 表示）
     """
 
     # ------------------------------------------------------------
-    # Inbox 解決
+    # Inbox 解決（存在しないなら UI 側で警告できるように例外）
     # ------------------------------------------------------------
     inbox_root = resolve_inbox_root(projects_root)
     if not inbox_root.exists():
         raise InboxNotAvailable(f"Inbox root not found: {inbox_root}")
 
     # ------------------------------------------------------------
-    # ユーザー配下準備
+    # ユーザー配下準備（ディレクトリ＋DB）
     # ------------------------------------------------------------
     paths = ensure_user_dirs(inbox_root, req.user_sub)
     items_db = items_db_path(inbox_root, req.user_sub)
     ensure_items_db(items_db)
 
     # ------------------------------------------------------------
-    # 容量チェック
+    # 容量チェック（保存前に判定）
     # ------------------------------------------------------------
     current = folder_size_bytes(paths["root"])
     incoming = len(req.data or b"")
@@ -78,21 +86,17 @@ def ingest_to_inbox(
         raise QuotaExceeded(current, incoming, quota)
 
     # ------------------------------------------------------------
-    # ファイル名正規化（macOS の分解文字対策）
+    # 保存先決定（kind → kind_files、無ければ other_files）
     # ------------------------------------------------------------
-    original_name = unicodedata.normalize("NFC", req.filename or "")
-
-    # ------------------------------------------------------------
-    # 保存先決定
-    # ------------------------------------------------------------
-    kind = detect_kind(original_name)
+    kind = detect_kind(req.filename)
     base = paths.get(f"{kind}_files", paths["other_files"])
 
+    # 例：2026/01/04
     day_dir = Path(base) / now_iso_jst()[:10].replace("-", "/")
     day_dir.mkdir(parents=True, exist_ok=True)
 
     item_id = str(uuid.uuid4())
-    safe_name = safe_filename(original_name)
+    safe_name = safe_filename(req.filename)
     filename = f"{item_id}__{safe_name}"
     out_path = day_dir / filename
 
@@ -108,8 +112,9 @@ def ingest_to_inbox(
     added_at = now_iso_jst()
 
     # ------------------------------------------------------------
-    # DB登録
+    # DB登録（失敗したらロールバック：ファイル削除）
     # ------------------------------------------------------------
+    # origin_* は「送付/コピー」等の出自がある場合のみ埋める
     origin_user = getattr(req, "origin_user", "") or ""
     origin_item_id = getattr(req, "origin_item_id", "") or ""
     origin_type = getattr(req, "origin_type", "") or ""
@@ -121,7 +126,7 @@ def ingest_to_inbox(
                 "item_id": item_id,
                 "kind": kind,
                 "stored_rel": stored_rel,
-                "original_name": original_name,
+                "original_name": req.filename,
                 "added_at": added_at,
                 "size_bytes": incoming,
                 "tags_json": getattr(req, "tags_json", "[]") or "[]",
@@ -140,7 +145,7 @@ def ingest_to_inbox(
             raise IngestFailed(f"DB insert failed: {type(e).__name__}: {e}")
 
     # ------------------------------------------------------------
-    # サムネ生成
+    # サムネ（imageのみ。その他は none に正規化）
     # ------------------------------------------------------------
     _thumb_rel, thumb_status, _thumb_err = ensure_thumb_for_item(
         inbox_root=inbox_root,

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# common_lib/ai/usage/extract_tokens.py
+# common_lib/ai/usage_extract/extract_tokens.py
 # ============================================================
 # Token usage extraction（正本）
 #

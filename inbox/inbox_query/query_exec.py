@@ -171,7 +171,6 @@ def format_dt_jp(dt_str: Any) -> str:
     except Exception:
         return s
 
-
 def query_items_page(
     *,
     sub: str,
@@ -182,43 +181,53 @@ def query_items_page(
     limit: int,
     offset: int,
     sort_mode: str = "newest",  # newest | viewed | name
+    sort_key: str = "added_at",  # added_at | original_name
+    sort_dir: str = "desc",      # desc | asc
+    group_kind: bool = False,
 ) -> tuple[pd.DataFrame, int]:
 
     """
     items_db（inbox_items.db）を主として、
     lv_db（last_viewed.db）を ATTACH して LEFT JOIN し、last_viewed を取得する。
-
-    ✅ 方針（確定）：
-    - last_viewed.db は「正本DB」
-    - last_viewed テーブルの日時列は last_viewed_at で固定
-    - 旧DB互換（列名推定 / migration吸収）はしない
-      → スキーマ保証は common_lib の ensure_last_viewed_db に一本化する
     """
 
+    # ============================================================
     # WHERE句の先頭整形（空ならWHERE無し）
+    # ============================================================
     where_clause = ""
     if where_sql and where_sql.strip():
         where_clause = f"WHERE {where_sql}"
 
-    # sort_mode 正規化
+    # ============================================================
+    # sort 引数の正規化
+    # ============================================================
     sm = (sort_mode or "newest").strip().lower()
     if sm not in ("newest", "viewed", "name"):
         sm = "newest"
 
-    # ✅ クエリ側で lv_db のスキーマを保証してから参照する
-    # （lv_db が無い/途中で壊れていると ATTACH/JOIN で落ちるため）
+    sk = (sort_key or "added_at").strip().lower()
+    if sk not in ("added_at", "original_name"):
+        sk = "added_at"
+
+    sd = (sort_dir or "desc").strip().lower()
+    safe_sort_dir = "ASC" if sd == "asc" else "DESC"
+
+    # ============================================================
+    # last_viewed.db の正本スキーマ保証
+    # ============================================================
     ensure_last_viewed_db(lv_db)
 
     with sqlite3.connect(items_db) as con:
         con.row_factory = sqlite3.Row
 
-        # lv_db を別DBとしてアタッチ（viewed 以外でも last_viewed 表示用に JOIN する）
-        # ※ JOIN 自体は常にしてOK（NULLが返るだけ）
+        # ============================================================
+        # last_viewed.db を ATTACH
+        # ============================================================
         con.execute("ATTACH DATABASE ? AS lvdb", (str(lv_db),))
 
+        # ============================================================
         # ① total（COUNT）
-        # 件数は inbox_items 側だけで決まるので、last_viewed との JOIN は不要。
-        # JOIN を入れると last_viewed 側の不整合で COUNT まで落ちるため、ここでは参照しない。
+        # ============================================================
         sql_count = f"""
         SELECT COUNT(*) AS cnt
         FROM (
@@ -241,20 +250,100 @@ def query_items_page(
         row = con.execute(sql_count, list(params)).fetchone()
         total = int(row["cnt"] if row and row["cnt"] is not None else 0)
 
-        # ② ORDER BY
-        if sm == "name":
-            order_sql = "ORDER BY it.original_name ASC, it.added_at DESC"
-        elif sm == "viewed":
-            # NULL（未閲覧）を最後、閲覧が新しい順、同点は added_at で安定化
-            order_sql = (
-                "ORDER BY (lv.last_viewed_at IS NULL) ASC, "
-                "lv.last_viewed_at DESC, "
-                "it.added_at DESC"
-            )
-        else:
-            order_sql = "ORDER BY it.added_at DESC"
+        # ============================================================
+        # ② ORDER BY（人間向けソート）
+        # ============================================================
 
+        # ① 先頭文字分類（数字→英字→その他）
+        name_class_sql = """
+        CASE
+            WHEN it.original_name GLOB '[0-9]*' THEN 1
+            WHEN it.original_name GLOB '[A-Za-z]*' THEN 2
+            ELSE 3
+        END
+        """
+
+        # ② 種類の並び（人間順）
+        kind_order_sql = """
+        CASE it.kind
+            WHEN 'pdf' THEN 1
+            WHEN 'word' THEN 2
+            WHEN 'excel' THEN 3
+            WHEN 'ppt' THEN 4
+            WHEN 'image' THEN 5
+            WHEN 'text' THEN 6
+            WHEN 'other' THEN 7
+            ELSE 99
+        END
+        """
+
+        # ③ メインソートキー
+        if sk == "original_name":
+            main_order = f"it.original_name COLLATE NOCASE {safe_sort_dir}"
+        else:
+            main_order = f"it.added_at {safe_sort_dir}"
+
+        # ============================================================
+        # ④ ORDER BY 組み立て（修正版）
+        # ============================================================
+
+        if sk == "added_at":
+            # -------------------------
+            # 格納日ソート（最優先）
+            # -------------------------
+            if group_kind:
+                order_sql = f"""
+                ORDER BY
+                    {kind_order_sql} ASC,
+                    it.added_at {safe_sort_dir},
+                    {name_class_sql} ASC,
+                    it.original_name COLLATE NOCASE ASC
+                """
+            else:
+                order_sql = f"""
+                ORDER BY
+                    it.added_at {safe_sort_dir},
+                    {name_class_sql} ASC,
+                    {kind_order_sql} ASC,
+                    it.original_name COLLATE NOCASE ASC
+                """
+        else:
+            # -------------------------
+            # ファイル名ソート
+            # -------------------------
+            if group_kind:
+                order_sql = f"""
+                ORDER BY
+                    {kind_order_sql} ASC,
+                    {name_class_sql} ASC,
+                    it.original_name COLLATE NOCASE {safe_sort_dir},
+                    it.added_at DESC
+                """
+            else:
+                order_sql = f"""
+                ORDER BY
+                    {name_class_sql} ASC,
+                    it.original_name COLLATE NOCASE {safe_sort_dir},
+                    {kind_order_sql} ASC,
+                    it.added_at DESC
+                """
+
+        # ============================================================
+        # 旧 sort_mode 互換
+        # ============================================================
+        if sort_mode and sort_mode != "newest":
+            if sm == "name":
+                order_sql = "ORDER BY it.original_name COLLATE NOCASE ASC, it.added_at DESC"
+            elif sm == "viewed":
+                order_sql = (
+                    "ORDER BY (lv.last_viewed_at IS NULL) ASC, "
+                    "lv.last_viewed_at DESC, "
+                    "it.added_at DESC"
+                )
+
+        # ============================================================
         # ③ page
+        # ============================================================
         sql_page = f"""
         SELECT
         it.item_id,
@@ -318,11 +407,12 @@ def query_items_page(
         df["last_viewed_disp"] = df["last_viewed"].apply(lambda x: format_dt_jp(x) if x else "") if "last_viewed" in df.columns else ""
         df["size"] = df["size_bytes"].apply(lambda n: bytes_human(int(n or 0))) if "size_bytes" in df.columns else ""
 
-        # アタッチ解除（念のため）
+        # ============================================================
+        # ATTACH 解除
+        # ============================================================
         con.execute("DETACH DATABASE lvdb")
 
     return df, total
-
 
 def query_items_page_minimal(
     *,
