@@ -282,7 +282,7 @@ def _render_inbox_file_picker_core(
         if K_SELECTED in st.session_state:
             st.session_state.pop(K_SELECTED, None)
 
-    nav1, nav2, nav3, nav4 = st.columns([1, 1, 3.2, 4.8])
+    nav1, nav2, nav3 = st.columns([1, 1, 4])
     with nav1:
         if st.button("⬅ 前へ", disabled=(page_index <= 0), key=f"{key_prefix}_prev"):
             st.session_state[K_PAGE] = max(page_index - 1, 0)
@@ -296,10 +296,11 @@ def _render_inbox_file_picker_core(
     with nav3:
         start = offset + 1
         end = min(offset + int(page_size), total)
-        st.caption(f"件数: {total} ／ ページ: {page_index + 1}/{last_page + 1}（{start}–{end}）")
-    with nav4:
-        #st.caption("※ ページ移動時は選択がクリアされます（事故防止）")
-        pass
+        st.caption(
+            f"件数: {total}　／　ページ: {page_index + 1} / {last_page + 1}"
+            f"　（表示レンジ：{start}–{end}）"
+        )
+
 
     # ============================================================
     # 7) UI：選択（radio：未選択OK）
@@ -333,12 +334,10 @@ def _render_inbox_file_picker_core(
     # ============================================================
     # 8) UI：読み込み確定（押した時だけ実ファイルを読む）
     # ============================================================
-    cbtn1, cbtn2 = st.columns([2, 8])
-    with cbtn1:
-        load_clicked = st.button("📥 選択ファイルを読み込む", key=f"{key_prefix}_load")
-    with cbtn2:
-        #st.caption("※ 押した時点で stored_rel を解決し、bytes を読み込んで返します。")
-        pass
+    load_clicked = st.button(
+        "📥 選択ファイルを読み込む",
+        key=f"{key_prefix}_load",
+    )
 
     if not load_clicked:
         return None

@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Optional
 
 from common_lib.project_master import read_processing_status
+from common_lib.storage.external_ssd_root import resolve_storage_subdir_root_v2
 
 from ..manifest_ops import build_doc_id, build_file_name_from_file
 from ..models import IngestSource
@@ -148,15 +149,28 @@ def _report_root_relative_dir(project_year: int, project_no: str) -> str:
     return f"{y}/{p}"
 
 
+def _archive_project_root(projects_root: Path) -> Path:
+    # -----------------------------------------------------------------------------
+    # Archive/project の実体ルート
+    # -----------------------------------------------------------------------------
+    archive_root = resolve_storage_subdir_root_v2(
+        Path(projects_root),
+        subdir="Archive",
+        role="main",
+    )
+
+    return Path(archive_root) / "project"
+
 def _report_project_dir(projects_root: Path, project_year: int, project_no: str) -> Path:
     # -----------------------------------------------------------------------------
     # 実ファイルシステム上の案件ディレクトリ
     #
     # 想定：
-    #   <PROJECTS_ROOT>/Archive/project/<year>/<pno>/
+    #   <ARCHIVE_ROOT>/project/<year>/<pno>/
     # -----------------------------------------------------------------------------
     rel = _report_root_relative_dir(project_year, project_no)
-    return Path(projects_root) / "Archive" / "project" / rel
+
+    return _archive_project_root(projects_root) / rel
 
 
 def _pdf_dir(projects_root: Path, project_year: int, project_no: str) -> Path:
@@ -481,7 +495,7 @@ def resolve_project_report_source(
             sha256=sha256 or None,
         )
 
-    source_text_abs = Path(projects_root) / "Archive" / "project" / source_text_relpath
+    source_text_abs = _archive_project_root(Path(projects_root)) / source_text_relpath
     if not source_text_abs.exists():
         return ProjectSourceResolveResult(
             ok=False,
@@ -538,7 +552,7 @@ def resolve_project_report_source(
             sha256=sha256 or None,
         )
 
-    source_pages_abs = Path(projects_root) / "Archive" / "project" / source_pages_relpath
+    source_pages_abs = _archive_project_root(Path(projects_root)) / source_pages_relpath
     if not source_pages_abs.exists():
         return ProjectSourceResolveResult(
             ok=False,
@@ -556,7 +570,7 @@ def resolve_project_report_source(
         )
 
     source_pdf_relpath = _relative_pdf_path(year, pno, fn)
-    source_pdf_abs = Path(projects_root) / "Archive" / "project" / source_pdf_relpath
+    source_pdf_abs = _archive_project_root(Path(projects_root)) / source_pdf_relpath
 
     if not source_pdf_abs.exists():
         return ProjectSourceResolveResult(

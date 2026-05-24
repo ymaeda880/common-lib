@@ -4,6 +4,8 @@
 #
 # 役割:
 # - latest.json を上書き保存する
+# - latest_YYYYMMDD_HHMMSS.json として履歴を保存する
+# - latest_*.json は最大5件だけ残す
 # - 必要ディレクトリを自動作成する
 # - 一時ファイル経由で安全に置換する
 # =============================================================================
@@ -25,6 +27,12 @@ from common_lib.ragbot.paths import get_ragbot_latest_json_path
 
 
 # =============================================================================
+# constants
+# =============================================================================
+MAX_LATEST_HISTORY_FILES = 5
+
+
+# =============================================================================
 # helper
 # =============================================================================
 def _now_iso_utc() -> str:
@@ -32,6 +40,13 @@ def _now_iso_utc() -> str:
     # UTC ISO文字列
     # -------------------------------------------------------------------------
     return datetime.now(timezone.utc).isoformat()
+
+
+def _now_history_timestamp() -> str:
+    # -------------------------------------------------------------------------
+    # 履歴ファイル名用 timestamp
+    # -------------------------------------------------------------------------
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 def _write_json_atomic(*, path: Path, payload: dict[str, Any]) -> Path:
@@ -54,6 +69,40 @@ def _write_json_atomic(*, path: Path, payload: dict[str, Any]) -> Path:
     tmp_path.replace(path)
 
     return path
+
+
+def _make_history_json_path(*, app_dir: Path) -> Path:
+    # -------------------------------------------------------------------------
+    # latest_YYYYMMDD_HHMMSS.json の保存先を作る
+    # 同一秒に複数保存された場合は _02, _03 ... を付ける
+    # -------------------------------------------------------------------------
+    timestamp = _now_history_timestamp()
+
+    path = app_dir / f"latest_{timestamp}.json"
+    if not path.exists():
+        return path
+
+    for i in range(2, 100):
+        candidate = app_dir / f"latest_{timestamp}_{i:02d}.json"
+        if not candidate.exists():
+            return candidate
+
+    raise RuntimeError("履歴JSONファイル名を作成できません。")
+
+
+def _cleanup_history_json_files(*, app_dir: Path, keep: int) -> None:
+    # -------------------------------------------------------------------------
+    # latest_*.json を最大 keep 件だけ残す
+    # latest.json は対象外
+    # -------------------------------------------------------------------------
+    history_files = sorted(
+        app_dir.glob("latest_*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+    for old_path in history_files[int(keep):]:
+        old_path.unlink()
 
 
 # =============================================================================
@@ -102,11 +151,32 @@ def save_latest_result(
     payload: dict[str, Any],
 ) -> Path:
     # -------------------------------------------------------------------------
-    # latest.json を上書き保存
+    # latest_YYYYMMDD_HHMMSS.json を履歴保存
     # -------------------------------------------------------------------------
-    path = get_ragbot_latest_json_path(
-        projects_root=projects_root,
-        user_sub=user_sub,
-        create_parent=True,
+    app_dir = (
+        get_ragbot_latest_json_path(
+            projects_root=projects_root,
+            user_sub=user_sub,
+            create_parent=True,
+        )
+        .parent
     )
-    return _write_json_atomic(path=path, payload=payload)
+
+    history_path = _make_history_json_path(
+        app_dir=app_dir,
+    )
+
+    saved_path = _write_json_atomic(
+        path=history_path,
+        payload=payload,
+    )
+
+    # -------------------------------------------------------------------------
+    # 履歴は最大5件だけ残す
+    # -------------------------------------------------------------------------
+    _cleanup_history_json_files(
+        app_dir=app_dir,
+        keep=MAX_LATEST_HISTORY_FILES,
+    )
+
+    return saved_path
