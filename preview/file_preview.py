@@ -879,7 +879,7 @@ def _render_excel_preview(
     suffix = file_path.suffix.lower()
 
     if suffix == ".xls":
-        st.info("このExcel形式（.xls）は現在プレビュー非対応です（保存・ダウンロードは可能）。")
+        st.info("このExcel形式（.xls）はプレビュー非対応です。")
         return
 
     if suffix in (".csv", ".tsv"):
@@ -1056,8 +1056,10 @@ def render_file_preview_with_controls(
     preview_id = safe_preview_id(preview_id)
     display_name = str(original_name or file_path.name)
 
-    st.divider()
-    st.subheader(title)
+    # st.divider()
+    # st.subheader(title)
+    # st.markdown(f"#### {title}")
+    
 
     if not file_path.exists():
         st.error("プレビュー対象ファイルが存在しません。")
@@ -1078,7 +1080,8 @@ def render_file_preview_with_controls(
         return
 
     if raw_kind not in ("pdf", "word", "ppt", "text"):
-        st.info(f"未対応形式です: {raw_kind or 'other'}")
+        #st.info(f"未対応形式です: {raw_kind or 'other'}")
+        st.info(f"プレビューに未対応な形式です．")
         return
 
     # ------------------------------------------------------------

@@ -168,6 +168,7 @@ def render_info_card(
         f'style="padding:{card_padding};">'
         f'<div class="ts-card-title" '
         f'style="font-size:{title_font_size};'
+        f'font-weight:800;'
         f'margin-bottom:{title_margin_bottom};">'
         f'{escape(title)}'
         '</div>'
@@ -397,43 +398,6 @@ def render_info_card_bullets_compact_custom(
             ("🤖", "AI校正"),
         ]
     """
-
-    # -------------------------------------------------------------------------
-    # li HTML
-    # -------------------------------------------------------------------------
-    # li_html = "\n".join(
-    #     (
-    #         f'<li style="'
-    #         f'list-style:none; '
-    #         f'font-size:{COMPACT_INFO_BODY_FONT_SIZE}; '
-    #         f'line-height:{COMPACT_INFO_BODY_LINE_HEIGHT}; '
-    #         f'margin-bottom:{COMPACT_INFO_ITEM_MARGIN_BOTTOM};'
-    #         f'">'
-    #         f'<span style="margin-right:0.45em;">{bullet}</span>'
-    #         f'{text}'
-    #         '</li>'
-    #     )
-    #     for bullet, text in items
-    # )
-
-
-#     li_html = "\n".join(
-#     (
-#         f'<li style="'
-#         f'list-style:none; '
-#         f'display:flex; '
-#         f'align-items:flex-start; '
-#         f'gap:0.18rem; '
-#         f'font-size:{COMPACT_INFO_BODY_FONT_SIZE}; '
-#         f'line-height:{COMPACT_INFO_BODY_LINE_HEIGHT}; '
-#         f'margin-bottom:{COMPACT_INFO_ITEM_MARGIN_BOTTOM};'
-#         f'">'
-#         f'<span style="min-width:1.2em;">{bullet}</span>'
-#         f'<span>{text}</span>'
-#         '</li>'
-#     )
-#     for bullet, text in items
-# )
 
     li_html = "\n".join(
         (
