@@ -51,6 +51,17 @@ def call_text(
             extra=extra,
         )
 
+    if provider == "azure":
+        from .tasks.text import azure_call_text
+        return azure_call_text(
+            model=model,
+            prompt=prompt,
+            system=system,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            extra=extra,
+        )
+
     raise InvalidRequestError(f"unknown provider: {provider}")
 
 
@@ -137,6 +148,10 @@ def generate_image(
         from .tasks.image import openai_generate_image
         return openai_generate_image(model=model, prompt=prompt, size=size, n=n, extra=extra)
 
+    if provider == "gemini":
+        from .tasks.image import gemini_generate_image
+        return gemini_generate_image(model=model, prompt=prompt, size=size, n=n, extra=extra)
+
     raise InvalidRequestError(f"image not supported provider: {provider}")
 
 
@@ -157,6 +172,10 @@ def edit_image(
     if provider == "openai":
         from .tasks.image import openai_edit_image
         return openai_edit_image(model=model, prompt=prompt, image_bytes=image_bytes, size=size, extra=extra)
+    
+    if provider == "gemini":
+        from .tasks.image import gemini_edit_image
+        return gemini_edit_image(model=model, prompt=prompt, image_bytes=image_bytes, size=size, extra=extra)
 
     raise InvalidRequestError(f"image edit not supported provider: {provider}")
 

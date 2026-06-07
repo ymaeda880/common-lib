@@ -105,7 +105,36 @@ def render_run_summary_compact(
     st.write(f"**費用** {jpy_str} / {usd_str}　　**トークン数** {tok_str}　　**AI使用時間** {el_str}")
 
     # 2行目：メタ（短く）
-    st.caption(f"モデル {model or '—'}・状態 {row.get('status')}")
+    # st.caption(f"モデル {model or '—'}・状態 {row.get('status')}")
+    # ------------------------------------------------------------
+    # モデル表示
+    # - Azure は明示表示
+    # ------------------------------------------------------------
+    # display_model = model or "—"
+    # if str(display_model).startswith("azure:"):
+    #     display_model = f"(Azure) {display_model.split(':', 1)[1]}"
+    # st.caption(
+    #     f"モデル {display_model}・状態 {row.get('status')}"
+    # )
+
+    # ------------------------------------------------------------
+    # モデル表示
+    # - ai_runs.db の provider / model を正本にする
+    # - page側から渡された model だけに依存しない
+    # ------------------------------------------------------------
+    row_provider = str(row.get("provider") or "").strip()
+    row_model = str(row.get("model") or "").strip()
+
+    display_model = row_model or str(model or "—")
+
+    if row_provider == "azure":
+        display_model = f"(Azure) {display_model}"
+
+    st.caption(
+        f"モデル {display_model}・状態 {row.get('status')}"
+    )
+
+
     st.caption(f"開始 {format_jst_iso_ja(str(started_at))}・終了 {format_jst_iso_ja(str(finished_at))}")
    
     n = (note or "").strip()
@@ -293,6 +322,7 @@ def render_run_summary_image_compact(
 
     # 2〜4行目：メタ（1行ずつ明示）
     st.caption(f"モデル {model or '—'}・状態 {row.get('status')}")
+
     st.caption(f"開始 {format_jst_iso_ja(str(started_at))}・終了 {format_jst_iso_ja(str(finished_at))}")
 
     n = (note or "").strip()
@@ -427,3 +457,122 @@ def render_run_summary_transcribe_compact(
 
     
 
+# ============================================================
+# run summary（Transcribe V2）
+# - Text AI と同じ見た目
+# - Gemini は tokens
+# - Whisper は audio time
+# ============================================================
+def render_run_summary_transcribe_compact_v2(
+    *,
+    projects_root: Any,
+    run_id: str,
+    model: str,
+    audio_sec: Optional[float] = None,
+    in_tokens: Optional[int] = None,
+    out_tokens: Optional[int] = None,
+    cost: Any = None,
+    note: str = "",
+    show_divider: bool = True,
+) -> None:
+
+    try:
+        import streamlit as st  # type: ignore
+    except Exception as e:
+        raise RuntimeError(
+            "render_run_summary_transcribe_compact_v2 は Streamlit 環境でのみ利用できます"
+        ) from e
+
+    from common_lib.busy import get_run
+    from common_lib.ui.time_format import format_jst_iso_ja
+
+    rid = str(run_id or "").strip()
+
+    if not rid:
+        if show_divider:
+            st.divider()
+        st.info("まだ実行がありません。")
+        return
+
+    row = get_run(projects_root=projects_root, run_id=rid)
+
+    if not row:
+        if show_divider:
+            st.divider()
+        st.caption(f"ai_runs.db に run が見つかりません（run_id: {rid}）")
+        return
+
+    if show_divider:
+        st.divider()
+
+    _apply_caption_compact_style()
+
+    # ------------------------------------------------------------
+    # time
+    # ------------------------------------------------------------
+    started_at = row.get("started_at") or "—"
+    finished_at = row.get("finished_at") or "—"
+
+    elapsed_ms = row.get("elapsed_ms")
+
+    elapsed_sec = None
+    if isinstance(elapsed_ms, (int, float)):
+        elapsed_sec = float(elapsed_ms) / 1000.0
+
+    # ------------------------------------------------------------
+    # cost
+    # ------------------------------------------------------------
+    if cost is None:
+        cost = _pick_cost_from_row(row)
+
+    jpy = getattr(cost, "jpy", None) if cost is not None else None
+    usd = getattr(cost, "usd", None) if cost is not None else None
+
+    jpy_str = f"¥{float(jpy):.2f}" if isinstance(jpy, (int, float)) else "—"
+    usd_str = f"${float(usd):.6f}" if isinstance(usd, (int, float)) else "—"
+
+    el_str = (
+        f"{float(elapsed_sec):.2f}s"
+        if isinstance(elapsed_sec, (int, float))
+        else "—"
+    )
+
+    # ------------------------------------------------------------
+    # 1行目
+    # ------------------------------------------------------------
+    st.write(
+        f"**費用** {jpy_str} / {usd_str}"
+        f"　　**AI使用時間** {el_str}"
+    )
+
+    # ------------------------------------------------------------
+    # 2行目
+    # ------------------------------------------------------------
+    if isinstance(in_tokens, int):
+        tok_str = f"in={in_tokens}"
+
+        if isinstance(out_tokens, int):
+            tok_str += f" out={out_tokens}"
+
+        st.write(f"**トークン数** {tok_str}")
+
+    elif isinstance(audio_sec, (int, float)):
+        st.write(
+            f"**音声時間** {float(audio_sec):.1f} 秒 "
+            f"({float(audio_sec)/60.0:.2f} 分)"
+        )
+
+    # ------------------------------------------------------------
+    # 3〜5行目
+    # ------------------------------------------------------------
+    st.caption(f"モデル {model or '—'}・状態 {row.get('status')}")
+
+    st.caption(
+        f"開始 {format_jst_iso_ja(str(started_at))}"
+        f"・終了 {format_jst_iso_ja(str(finished_at))}"
+    )
+
+    if note:
+        st.caption(f"run_id {rid}　　note: {note}")
+    else:
+        st.caption(f"run_id {rid}")

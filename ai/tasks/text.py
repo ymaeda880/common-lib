@@ -201,6 +201,43 @@ def gemini_call_text(
 
     return res
 
+
+# ============================================================
+# Azure OpenAI（Text）
+# ============================================================
+def azure_call_text(
+    *,
+    model: str,
+    prompt: str,
+    system: Optional[str],
+    temperature: Optional[float],
+    max_output_tokens: Optional[int],
+    extra: Optional[Dict[str, Any]],
+) -> TextResult:
+    from ..providers.azure.text_responses_create import call_azure_responses_create
+
+    res = call_azure_responses_create(
+        model=model,
+        prompt=prompt,
+        system=system,
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+        extra=extra,
+    )
+
+    # ------------------------------------------------------------
+    # cost（正本）：usage が取れていて cost が無い場合のみ埋める
+    # ------------------------------------------------------------
+    #res = _fill_text_cost_if_missing(res=res, model=str(model))
+    # ------------------------------------------------------------
+    # cost（Azure用）
+    # - pricing.py では azure:gpt-5-mini を別単価として管理する
+    # - 現時点では OpenAI / gpt-5-mini と同額
+    # ------------------------------------------------------------
+    res = _fill_text_cost_if_missing(res=res, model=f"azure:{model}")
+
+    return res
+
 # ============================================================
 # OpenAI（Vision Text）
 # ============================================================

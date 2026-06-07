@@ -31,6 +31,12 @@ CHAT_PRICES_USD_PER_1M: Dict[str, ChatPricePer1M] = {
     "gpt-5": ChatPricePer1M(in_usd=1.25, out_usd=10.00),
     "gpt-5-mini": ChatPricePer1M(in_usd=0.25, out_usd=2.00),
     "gpt-5-nano": ChatPricePer1M(in_usd=0.05, out_usd=0.40),
+
+    # Azure OpenAI
+    # - 現時点では OpenAI / gpt-5-mini と同額に設定
+    # - Azure 側の正式単価を確認したらここだけ変更する
+    "azure:gpt-5-mini": ChatPricePer1M(in_usd=0.25, out_usd=2.00),
+       
     "gpt-4o": ChatPricePer1M(in_usd=2.50, out_usd=10.00),
     "gpt-4o-mini": ChatPricePer1M(in_usd=0.15, out_usd=0.60),
     # 参考（必要なら）
@@ -39,6 +45,10 @@ CHAT_PRICES_USD_PER_1M: Dict[str, ChatPricePer1M] = {
     "gpt-3.5-turbo": ChatPricePer1M(in_usd=0.50, out_usd=1.50),
     # gemini
     "gemini-2.0-flash": ChatPricePer1M(in_usd=0.10, out_usd=0.40),
+    "gemini-3.5-flash": ChatPricePer1M(
+        in_usd=1.50,
+        out_usd=9.00,
+    ),
 
 }
 
@@ -54,6 +64,9 @@ AUDIO_PRICES_USD_PER_MIN: Dict[str, AudioPricePerMin] = {
     # OpenAI Transcribe models（Whisper互換・分単価）
     "gpt-4o-mini-transcribe": AudioPricePerMin(usd_per_min=0.006),
     "gpt-4o-transcribe": AudioPricePerMin(usd_per_min=0.006),
+
+    # Gemini Transcribe models（暫定：分単価換算）
+    #"gemini-3.5-flash": AudioPricePerMin(usd_per_min=0.000000),
 }
 
 

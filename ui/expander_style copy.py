@@ -28,6 +28,52 @@ def render_theme_expander_css(
     theme: dict[str, Any],
 ) -> None:
 
+    # ------------------------------------------------------------
+    # debug
+    # ------------------------------------------------------------
+    # st.write("DEBUG container_key =", container_key)
+
+    # st.write("DEBUG theme =", theme)
+
+    # st.write(
+    #     "DEBUG keys =",
+    #     list(theme.keys()),
+    # )
+
+    # st.write(
+    #     "DEBUG accent =",
+    #     theme.get("accent"),
+    # )
+
+    # st.write(
+    #     "DEBUG border =",
+    #     theme.get("border"),
+    # )
+
+    # st.write(
+    #     "DEBUG bg =",
+    #     theme.get("bg"),
+    # )
+
+
+    # ------------------------------------------------------------
+    # theme values
+    # ------------------------------------------------------------
+    # theme_accent = theme.get(
+    #     "accent",
+    #     "#15803d",
+    # )
+
+    # theme_border = theme.get(
+    #     "border",
+    #     "rgba(34, 197, 94, 0.35)",
+    # )
+
+    # theme_bg = theme.get(
+    #     "bg",
+    #     "#f4fff7",
+    # )
+
     theme_accent = theme["primary"]
 
     theme_border = theme["border"]
@@ -76,14 +122,8 @@ def render_theme_expander_css(
             font-weight: 800 !important;
             color: {theme_accent} !important;
             letter-spacing: 0.01em;
-        }} 
+        }}
 
-        
-        /* =====================================================
-           expander本文エリア
-           - 説明文全体の余白
-           - 説明文全体の行間
-           ===================================================== */
         .st-key-{container_key} div[data-testid="stExpanderDetails"] {{
             padding: 14px 30px 28px 30px;
 
@@ -93,29 +133,9 @@ def render_theme_expander_css(
             background:
                 rgba(255,255,255,0.58);
 
-            /* 本文全体の行間 */
-            line-height: 1.5;
+            line-height: 1.9;
         }}
 
-        /* =====================================================
-           expander本文フォントサイズ
-           - p  : 通常本文
-           - li : 箇条書き
-           - 説明文全体の文字サイズを調整する場所
-           ===================================================== */
-        .st-key-{container_key} div[data-testid="stExpanderDetails"] p,
-        .st-key-{container_key} div[data-testid="stExpanderDetails"] li {{
-            font-size: 0.90rem !important;
-        }}
-
-        /* =====================================================
-        区切り線（---）の上下余白
-        ===================================================== */
-        .st-key-{container_key} div[data-testid="stExpanderDetails"] hr {{
-            margin-top: 0.3rem !important;
-            margin-bottom: 0.3rem !important;
-        }}
-        
         </style>
         """,
         unsafe_allow_html=True,

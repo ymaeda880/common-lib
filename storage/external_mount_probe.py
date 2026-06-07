@@ -4,7 +4,7 @@
 # Backup mount probe（正本：storage.toml / 新設定のみ）
 #
 # 目的：
-# - backup / backup2 の「接続状況」を UI 側で表示するために、
+# - backup / backup2 / sync の「接続状況」を UI 側で表示するために、
 #   外部SSDのマウントパスを role ごとに probe する（停止しない）
 #
 # 方針：
@@ -13,8 +13,9 @@
 # - 旧設定（storage.external.*）は「物理削除扱い」なので参照しない
 #
 # 参照キー（新設定・正本）：
-# - [storage.backup.<loc>].root
-# - [storage.backup2.<loc>].root
+# - [{purpose}.backup.<loc>].root
+# - [{purpose}.backup2.<loc>].root
+# - [{purpose}.sync.<loc>].root
 # ============================================================
 
 from __future__ import annotations

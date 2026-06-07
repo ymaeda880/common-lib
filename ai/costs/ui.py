@@ -85,61 +85,55 @@ def render_transcribe_cost_summary(
     model: str,
     audio_sec: Optional[float],
     cost: Optional[CostResult],
+    in_tokens: Optional[int] = None,
+    out_tokens: Optional[int] = None,
+    elapsed_sec: Optional[float] = None,
     notes: Optional[str] = None,
 ) -> None:
     """
     Transcribe の概算表示（Streamlit）
-    - Chat と同じ「概算 / 内訳 / 単価」3カラム構成に揃える
-    - 計算しない（CostResult を受け取って表示するだけ）
+    - Text AI の run summary と同じ見た目に寄せる
+    - 計算しない（CostResult / tokens / elapsed を受け取って表示するだけ）
     """
     try:
         import streamlit as st  # type: ignore
     except Exception as e:
         raise RuntimeError("render_transcribe_cost_summary は Streamlit 環境でのみ利用できます") from e
 
-    st.markdown(f"### {title}")
+    st.markdown(f"##### {title}")
 
-    c1, c2, c3 = st.columns(3)
+    # ============================================================
+    # 表示値
+    # ============================================================
+    jpy = getattr(cost, "jpy", None) if cost is not None else None
+    usd = getattr(cost, "usd", None) if cost is not None else None
 
-    # ------------------------------------------------------------
-    # c1: 概算（JPY）
-    # ------------------------------------------------------------
-    with c1:
-        if cost is None:
-            st.metric("概算（JPY）", "—")
-        else:
-            st.metric("概算（JPY）", f"{cost.jpy:,.2f} 円")
-            st.caption(f"為替: {cost.usd_jpy:.2f} JPY/USD（{cost.fx_source}）")
+    jpy_str = f"¥{float(jpy):.2f}" if isinstance(jpy, (int, float)) else "—"
+    usd_str = f"${float(usd):.6f}" if isinstance(usd, (int, float)) else "—"
+    el_str = f"{float(elapsed_sec):.2f}s" if isinstance(elapsed_sec, (int, float)) else "—"
 
-    # ------------------------------------------------------------
-    # c2: 内訳（Chat と同じ “- key: value” 形式）
-    # ------------------------------------------------------------
-    with c2:
-        st.write("**内訳**")
+    usage_str = "—"
+    if isinstance(in_tokens, int) or isinstance(out_tokens, int):
+        in_str = str(in_tokens) if isinstance(in_tokens, int) else "—"
+        out_str = str(out_tokens) if isinstance(out_tokens, int) else "—"
+        usage_str = f"**トークン数** in={in_str} out={out_str}"
+    elif isinstance(audio_sec, (int, float)):
+        sec = float(audio_sec)
+        usage_str = f"**音声時間** {sec:.1f}秒 / {sec / 60.0:.2f}分"
 
-        if audio_sec is None:
-            st.write("- audio_seconds: —")
-        else:
-            try:
-                sec = float(audio_sec)
-                audio_min = sec / 60.0
-                st.write(f"- audio_seconds: {sec:.1f} 秒 / {audio_min:.2f} 分")
-            except Exception:
-                st.write(f"- audio_seconds: {audio_sec}")
+    # ============================================================
+    # Text AI と同じ見た目の1行サマリ
+    # ============================================================
+    st.write(
+        f"**費用** {jpy_str} / {usd_str}　　"
+        f"{usage_str}　　"
+        f"**AI使用時間** {el_str}"
+    )
 
-        st.write(f"- usd: ${cost.usd:.6f}" if cost is not None else "- usd: —")
+    # ============================================================
+    # メタ情報
+    # ============================================================
+    #st.caption(f"モデル {model or '—'}")
 
-        if notes:
-            st.caption(str(notes))
-
-    # ------------------------------------------------------------
-    # c3: 単価（USD / min）※ pricing 正本から表示
-    # ------------------------------------------------------------
-    with c3:
-        st.write("**単価（USD / min）**")
-        p = get_audio_price(model)
-        if p is None:
-            st.write("- 未設定")
-        else:
-            st.write(f"- ${float(p.usd_per_min):.6f} / min")
-        st.caption(f"model: {model}")
+    if notes:
+        st.caption(str(notes))

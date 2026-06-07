@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Literal, Optional, List
 
 
-Provider = Literal["openai", "gemini"]
+Provider = Literal["openai", "gemini", "azure"]
 TaskType = Literal["text", "image", "transcribe", "embedding"]
 
 

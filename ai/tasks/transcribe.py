@@ -16,7 +16,8 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from ..types import TranscribeResult
-from ..costs.estimate import estimate_transcribe_cost
+#from ..costs.estimate import estimate_transcribe_cost
+from ..costs.estimate import estimate_transcribe_cost, estimate_chat_cost_from_usage
 
 
 def openai_transcribe_audio(
@@ -113,17 +114,30 @@ def gemini_transcribe_audio(
     )
 
     # ============================================================
-    # cost（正本）
-    # - audio_seconds がある時だけ
-    # - 為替は estimate_transcribe_cost 側（fx 正本）で解決する
-    # - pricing 未設定などで計算不能なら None のまま
+    # TEMP DEBUG
+    # Gemini usage dump
+    # 概算(cost=None)の原因調査
     # ============================================================
-    cost = None
-    if audio_seconds is not None:
-        cost = estimate_transcribe_cost(
-            model=model,
-            audio_seconds=float(audio_seconds),
-        )
+    # print("============================================================")
+    # print("GEMINI_TRANSCRIBE_USAGE_DEBUG")
+    # print(repr(res.usage))
+    # print("============================================================")
+
+    # ============================================================
+    # TEMP DEBUG END
+    # Gemini usage dump
+    # ============================================================
+
+    # ============================================================
+    # cost（正本）
+    # - Gemini は音声分単価ではなく usage tokens ベースで概算する
+    # - usage から input/output tokens が取れない場合は None
+    # - 為替は estimate_chat_cost_from_usage 側（fx 正本）で解決する
+    # ============================================================
+    cost = estimate_chat_cost_from_usage(
+        model=model,
+        usage=res.usage,
+    )
 
     return TranscribeResult(
         provider=res.provider,

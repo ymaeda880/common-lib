@@ -35,6 +35,7 @@ InputSourceType = Literal[
     "upload",
     "inbox",
     "internal",
+    "sample",
 ]
 
 
@@ -56,7 +57,7 @@ class InputSourceResult:
 # internal renderer type
 # ============================================================
 InternalInputRenderer = Callable[[], InputSourceResult]
-
+SampleInputRenderer = Callable[[], InputSourceResult]
 
 # ============================================================
 # helper：空 result
@@ -95,6 +96,9 @@ def _source_label(source: str) -> str:
 
     if source == "internal":
         return "💾 内部保存から"
+    
+    if source == "sample":
+        return "🧪 サンプルから"
 
     return source
 
@@ -113,6 +117,7 @@ def render_input_source(
     inbox_kinds: list[str] | None = None,
     inbox_extensions: list[str] | None = None,
     internal_renderer: InternalInputRenderer | None = None,
+    sample_renderer: SampleInputRenderer | None = None,
     input_label: str = "入力方法",
     paste_label: str = "ここに本文を貼り付け",
     upload_label: str = "ファイルをアップロード",
@@ -136,6 +141,19 @@ def render_input_source(
         st.error(
             "allowed_sources に internal が含まれていますが、"
             "internal_renderer が指定されていません。"
+        )
+        return empty_input_source_result()
+
+    # ------------------------------------------------------------
+    # sample renderer チェック
+    # ------------------------------------------------------------
+    if (
+        "sample" in allowed_sources
+        and sample_renderer is None
+    ):
+        st.error(
+            "allowed_sources に sample が含まれていますが、"
+            "sample_renderer が指定されていません。"
         )
         return empty_input_source_result()
 
@@ -453,6 +471,52 @@ def render_input_source(
             ),
             kind=result.kind or "",
         )
+
+    # ============================================================
+    # sample
+    # ============================================================
+    elif source == "sample":
+        if sample_renderer is None:
+            st.error(
+                "sample_renderer が指定されていません。"
+            )
+
+            return empty_input_source_result()
+
+        result = sample_renderer()
+
+        st.session_state[k_text] = (
+            result.text or ""
+        )
+
+        st.session_state[k_bytes] = (
+            result.data_bytes or b""
+        )
+
+        st.session_state[k_name] = (
+            result.file_name or ""
+        )
+
+        st.session_state[k_kind] = (
+            result.kind or ""
+        )
+
+        st.session_state[k_confirmed] = bool(
+            result.confirmed
+        )
+
+        return InputSourceResult(
+            source_type="sample",
+            confirmed=bool(result.confirmed),
+            text=result.text or "",
+            data_bytes=result.data_bytes or b"",
+            file_name=result.file_name or "",
+            suffix=_suffix_of(
+                result.file_name or ""
+            ),
+            kind=result.kind or "",
+        )
+
 
     # ============================================================
     # invalid source

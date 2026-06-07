@@ -58,13 +58,81 @@ def transcribe_audio(
                 types.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
             ],
         )
+
+        # ============================================================
+        # DEBUG : gemini raw response
+        # ============================================================
+        # print("=" * 60)
+        # print("GEMINI_RAW_RESPONSE_DEBUG")
+
+        # try:
+        #     print("response_text_len =", len(getattr(resp, "text", "") or ""))
+        # except Exception as e:
+        #     print("response_text_len error =", e)
+
+        # try:
+        #     print("candidate_count =", len(resp.candidates))
+        # except Exception as e:
+        #     print("candidate_count error =", e)
+
+        # try:
+        #     print("finish_reason =", resp.candidates[0].finish_reason)
+        # except Exception as e:
+        #     print("finish_reason error =", e)
+
+        # try:
+        #     print("candidate_text_preview =")
+        #     print(repr(str(resp.candidates[0].content.parts[0].text)[:300]))
+        # except Exception as e:
+        #     print("candidate_text_preview error =", e)
+
+        # print("=" * 60)
+        # ============================================================
+        # DEBUG END
+        # ============================================================
+
+        # ============================================================
+        # Gemini usage metadata
+        # - google-genai の usage_metadata から token 数を取得する
+        # - 取得できない場合は None のままにする
+        # ============================================================
+        usage_metadata = getattr(resp, "usage_metadata", None)
+
     except Exception as e:
         raise ProviderError(f"Gemini transcribe generate_content failed: {e}", provider="gemini") from e
 
 
-
+    # ============================================================
+    # response text
+    # ============================================================
     text = getattr(resp, "text", "") or ""
-    usage = UsageSummary()
+
+    # ============================================================
+    # TEMP DEBUG
+    # Gemini response dump
+    # ============================================================
+    # print("============================================================")
+    # print("GEMINI_RESPONSE_TYPE:", type(resp))
+    # print("GEMINI_RESPONSE_REPR:")
+    # print(repr(resp))
+    # print("============================================================")
+    # ============================================================
+    # TEMP DEBUG END
+    # ============================================================
+
+    # ============================================================
+    # usage summary
+    # - Gemini は usage_metadata を UsageSummary に正規化する
+    # - prompt_token_count を input_tokens として扱う
+    # - candidates_token_count を output_tokens として扱う
+    # - total_token_count を total_tokens として扱う
+    # ============================================================
+    usage = UsageSummary(
+        input_tokens=getattr(usage_metadata, "prompt_token_count", None),
+        output_tokens=getattr(usage_metadata, "candidates_token_count", None),
+        total_tokens=getattr(usage_metadata, "total_token_count", None),
+        raw=usage_metadata,
+    )
 
     return TranscribeResult(
         provider="gemini",

@@ -9,14 +9,33 @@
 # ============================================================
 # Text / Chat 系モデル（表示順もここで管理）
 # ============================================================
+# TEXT_MODEL_CATALOG = [
+#     ("OpenAI / gpt-5-mini", "openai:gpt-5-mini"),
+#     ("OpenAI / gpt-5-nano", "openai:gpt-5-nano"),
+#     ("Gemini / gemini-2.0-flash", "gemini:gemini-2.0-flash"),
+# ]
+
 TEXT_MODEL_CATALOG = [
+    ("OpenAI / gpt-5", "openai:gpt-5"),
     ("OpenAI / gpt-5-mini", "openai:gpt-5-mini"),
     ("OpenAI / gpt-5-nano", "openai:gpt-5-nano"),
-    ("Gemini / gemini-2.0-flash", "gemini:gemini-2.0-flash"),
+    ("Azure OpenAI / gpt-5-mini", "azure:gpt-5-mini"),
+    ("Gemini / gemini-3.5-flash", "gemini:gemini-3.5-flash"),
 ]
 
 DEFAULT_TEXT_MODEL_KEY = "openai:gpt-5-mini"
 
+DEFAULT_TEXT_MODEL_KEY = "openai:gpt-5-mini"
+
+# ============================================================
+# Image 系モデル
+# ============================================================
+IMAGE_MODEL_CATALOG = [
+    ("OpenAI / gpt-image-1", "openai:gpt-image-1"),
+    ("Gemini / gemini-2.5-flash-image", "gemini:gemini-2.5-flash-image"),
+]
+
+DEFAULT_IMAGE_MODEL_KEY = "openai:gpt-image-1"
 
 # ============================================================
 # Transcribe 系モデル
@@ -25,7 +44,7 @@ TRANSCRIBE_MODELS = [
     "whisper-1",
     "gpt-4o-mini-transcribe",
     "gpt-4o-transcribe",
-    "gemini-2.0-flash",
+    "gemini-3.5-flash",
 ]
 
 

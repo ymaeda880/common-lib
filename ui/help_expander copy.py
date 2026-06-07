@@ -98,12 +98,3 @@ def render_themed_help_expander(
                         content,
                         unsafe_allow_html=True,
                     )
-                # with st_tab:
-                #     st.markdown(
-                #         f"""
-                # <div style="font-size:0.90rem; line-height:1.65;">
-                # {content}
-                # </div>
-                # """,
-                #         unsafe_allow_html=True,
-                #     )
