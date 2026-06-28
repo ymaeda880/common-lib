@@ -27,6 +27,8 @@ import math
 import subprocess
 from pathlib import Path
 from typing import Optional, Tuple
+import json
+import tempfile
 
 # ============================================================
 # imports（3rd party）
@@ -290,23 +292,75 @@ def render_pdf_page_only(
     return None
 
 
-
 # ============================================================
 # helpers（Office -> preview.pdf）
 # ============================================================
 def ensure_office_preview_pdf(src_path: Path, out_dir: Path) -> Optional[Path]:
     # ------------------------------------------------------------
     # Office系ファイルを LibreOffice で PDF 化する
-    # - out_dir/preview.pdf を正本キャッシュにする
-    # - 既に preview.pdf があれば再利用する
+    #
+    # - out_dir/preview.pdf をプレビューPDFとして使う
+    # - preview_meta.json に元ファイルの署名を保存する
+    # - 元ファイルが変わっていなければ preview.pdf を再利用する
+    # - 元ファイルが変わっていれば一時フォルダでPDF化し，成功後に置き換える
     # ------------------------------------------------------------
+
+    # ============================================================
+    # DEBUG: preview cache check
+    # ============================================================
+    # st.write(
+    #     {
+    #         "DEBUG": "ensure_office_preview_pdf",
+    #         "src_path": str(src_path),
+    #         "src_exists": Path(src_path).exists(),
+    #         "src_mtime_ns": Path(src_path).stat().st_mtime_ns if Path(src_path).exists() else None,
+    #         "src_size": Path(src_path).stat().st_size if Path(src_path).exists() else None,
+    #         "out_dir": str(out_dir),
+    #         "out_pdf": str(out_dir / "preview.pdf"),
+    #         "out_pdf_exists": (out_dir / "preview.pdf").exists(),
+    #         "meta_exists": (out_dir / "preview_meta.json").exists(),
+    #     }
+    # )
+    # ============================================================
+    # DEBUG END: preview cache check
+    # ============================================================
+
+
     out_dir.mkdir(parents=True, exist_ok=True)
 
     out_pdf = out_dir / "preview.pdf"
+    meta_path = out_dir / "preview_meta.json"
 
-    if out_pdf.exists():
-        return out_pdf
+    try:
+        src_path = Path(src_path)
+        src_stat = src_path.stat()
 
+        src_sig = {
+            "src_path": str(src_path.resolve()),
+            "src_size": int(src_stat.st_size),
+            "src_mtime_ns": int(src_stat.st_mtime_ns),
+        }
+    except Exception:
+        return None
+
+    # ------------------------------------------------------------
+    # キャッシュ再利用判定
+    # ------------------------------------------------------------
+    if out_pdf.exists() and meta_path.exists():
+        try:
+            old_sig = json.loads(
+                meta_path.read_text(encoding="utf-8")
+            )
+
+            if old_sig == src_sig:
+                return out_pdf
+
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------
+    # LibreOffice確認
+    # ------------------------------------------------------------
     try:
         r = subprocess.run(
             ["soffice", "--version"],
@@ -321,26 +375,86 @@ def ensure_office_preview_pdf(src_path: Path, out_dir: Path) -> Optional[Path]:
     except Exception:
         return None
 
+    # ------------------------------------------------------------
+    # 一時フォルダでPDF変換し，成功後に正本PDFへ置き換える
+    # ------------------------------------------------------------
     try:
-        subprocess.run(
-            [
-                "soffice",
-                "--headless",
-                "--convert-to",
-                "pdf",
-                str(src_path),
-                "--outdir",
-                str(out_dir),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
 
-        cand = out_dir / f"{src_path.stem}.pdf"
+            subprocess.run(
+                [
+                    "soffice",
+                    "--headless",
+                    "--convert-to",
+                    "pdf",
+                    str(src_path),
+                    "--outdir",
+                    str(tmp_dir),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
 
-        if cand.exists():
+            cand = tmp_dir / f"{src_path.stem}.pdf"
+
+            if not cand.exists():
+                return None
+            
+            # ============================================================
+            # DEBUG: libreoffice converted pdf
+            # ============================================================
+            # st.write(
+            #     {
+            #         "DEBUG": "libreoffice converted pdf",
+            #         "src_path": str(src_path),
+            #         "src_size": src_path.stat().st_size if src_path.exists() else None,
+            #         "src_mtime_ns": src_path.stat().st_mtime_ns if src_path.exists() else None,
+            #         "tmp_pdf": str(cand),
+            #         "tmp_pdf_exists": cand.exists(),
+            #         "tmp_pdf_size": cand.stat().st_size if cand.exists() else None,
+            #         "tmp_pdf_mtime_ns": cand.stat().st_mtime_ns if cand.exists() else None,
+            #         "out_pdf": str(out_pdf),
+            #         "out_pdf_exists_before_replace": out_pdf.exists(),
+            #         "out_pdf_size_before_replace": out_pdf.stat().st_size if out_pdf.exists() else None,
+            #         "out_pdf_mtime_ns_before_replace": out_pdf.stat().st_mtime_ns if out_pdf.exists() else None,
+            #     }
+            # )
+            # ============================================================
+            # DEBUG END: libreoffice converted pdf
+            # ============================================================
+
+
             cand.replace(out_pdf)
+
+
+
+            # ============================================================
+            # DEBUG: preview pdf replaced
+            # ============================================================
+            # st.write(
+            #     {
+            #         "DEBUG": "preview pdf replaced",
+            #         "out_pdf": str(out_pdf),
+            #         "out_pdf_exists_after_replace": out_pdf.exists(),
+            #         "out_pdf_size_after_replace": out_pdf.stat().st_size if out_pdf.exists() else None,
+            #         "out_pdf_mtime_ns_after_replace": out_pdf.stat().st_mtime_ns if out_pdf.exists() else None,
+            #     }
+            # )
+            # ============================================================
+            # DEBUG END: preview pdf replaced
+            # ============================================================
+
+
+            meta_path.write_text(
+                json.dumps(
+                    src_sig,
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
 
         return out_pdf if out_pdf.exists() else None
 
@@ -491,13 +605,35 @@ def _resolve_preview_pdf_for_office(
     # ------------------------------------------------------------
     preview_pdf = out_dir / "preview.pdf"
 
+
+    # ============================================================
+    # DEBUG: resolve preview pdf
+    # ============================================================
+    # st.write(
+    #     {
+    #         "DEBUG": "_resolve_preview_pdf_for_office",
+    #         "raw_kind": raw_kind,
+    #         "file_path": str(file_path),
+    #         "file_exists": Path(file_path).exists(),
+    #         "file_mtime_ns": Path(file_path).stat().st_mtime_ns if Path(file_path).exists() else None,
+    #         "file_size": Path(file_path).stat().st_size if Path(file_path).exists() else None,
+    #         "out_dir": str(out_dir),
+    #         "preview_pdf": str(preview_pdf),
+    #         "preview_pdf_exists": preview_pdf.exists(),
+    #         "preview_pdf_mtime_ns": preview_pdf.stat().st_mtime_ns if preview_pdf.exists() else None,
+    #     }
+    # )
+    # ============================================================
+    # DEBUG END: resolve preview pdf
+    # ============================================================
+
     if preview_pdf.exists():
         return preview_pdf
 
     status_box = st.empty()
 
     if raw_kind == "word":
-        status_box.warning("📄 Word を PDF に変換しています（初回は時間がかかります）")
+        status_box.warning("📄 Word を PDF に変換しています（完了までしばらくお待ちください）")
     elif raw_kind == "ppt":
         status_box.warning("📊 PowerPoint を PDF に変換しています（初回は時間がかかります）")
 
