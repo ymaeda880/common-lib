@@ -198,6 +198,43 @@ def probe_backup_mounts_by_purpose(
     )
 
 # ============================================================
+# 追加：sync の標準probe（新設定・用途別）
+# ============================================================
+def probe_sync_mounts_by_purpose(
+    projects_root: Path,
+    *,
+    purpose_key: str,
+    roles: Sequence[str] = ("sync",),
+    location: str | None = None,
+) -> list[MountProbeResult]:
+    """
+    用途別の同期SSD probe（新設定・用途別）。
+
+    storage.toml の以下を参照する。
+
+      [{purpose_key}.sync.{location}].root
+
+    purpose_key:
+      - archive
+      - databases
+
+    location:
+      - Home
+      - Prec
+      - Portable
+
+    例:
+      [archive.sync.Home].root
+      [databases.sync.Prec].root
+    """
+    return probe_backup_roots_v2(
+        projects_root,
+        roles=roles,
+        purpose_key=purpose_key,
+        location=location,
+    )
+
+# ============================================================
 # 便利関数：backup/backup2 の標準probe（新設定 v2）
 # ============================================================
 def probe_backup_mounts(
