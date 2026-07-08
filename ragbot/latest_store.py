@@ -151,22 +151,29 @@ def save_latest_result(
     payload: dict[str, Any],
 ) -> Path:
     # -------------------------------------------------------------------------
-    # latest_YYYYMMDD_HHMMSS.json を履歴保存
+    # latest.json を上書き保存する
     # -------------------------------------------------------------------------
-    app_dir = (
-        get_ragbot_latest_json_path(
-            projects_root=projects_root,
-            user_sub=user_sub,
-            create_parent=True,
-        )
-        .parent
+    latest_path = get_ragbot_latest_json_path(
+        projects_root=projects_root,
+        user_sub=user_sub,
+        create_parent=True,
     )
+
+    saved_latest_path = _write_json_atomic(
+        path=latest_path,
+        payload=payload,
+    )
+
+    # -------------------------------------------------------------------------
+    # latest_YYYYMMDD_HHMMSS.json を履歴保存する
+    # -------------------------------------------------------------------------
+    app_dir = latest_path.parent
 
     history_path = _make_history_json_path(
         app_dir=app_dir,
     )
 
-    saved_path = _write_json_atomic(
+    _write_json_atomic(
         path=history_path,
         payload=payload,
     )
@@ -179,4 +186,5 @@ def save_latest_result(
         keep=MAX_LATEST_HISTORY_FILES,
     )
 
-    return saved_path
+    return saved_latest_path
+
