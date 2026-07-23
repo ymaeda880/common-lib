@@ -19,13 +19,15 @@
 #             │   └── pdf_status.json      ← PDF判定/status（正本：pdf配下）
 #             ├── ocr/                     ← OCR生成物
 #             ├── text/                    ← PDFから抽出したテキスト（正本）
-#             ├── others/
-#             └── contract/
+#             ├── others/                  ← プロジェクト関連ファイル
+#             ├── others2/                 ← 契約関連ファイル
+#             └── contract/                ← 契約書PDF
 #
 # ※ 方針
 # - pdf/history は作らない（不要）
-# - others は拡張子別ディレクトリを作らない（others 直下に置く）
-# - contract は契約関連書類（見積/契約/発注等）を格納する専用ディレクトリ
+# - others はプロジェクト関連ファイルを格納する
+# - others2 は契約関連ファイルを格納する
+# - contract は契約書PDFを格納する専用ディレクトリ
 # - pdf_status.json は ocr 配下に置かない（pdf 配下へ集約）
 #
 # ■ 設計方針
@@ -246,6 +248,25 @@ def get_project_others_dir(
     return project_root / "others"
 
 
+def get_project_others2_dir(
+    projects_root: Path,
+    *,
+    project_year: int | str,
+    project_no: int | str,
+    role: str = "main",
+) -> Path:
+    # ------------------------------------------------------------
+    # Archive/project/<year>/<pno>/others2
+    # - 契約関連ファイルの格納先
+    # ------------------------------------------------------------
+    project_root = get_project_root_dir(
+        projects_root,
+        project_year=project_year,
+        project_no=project_no,
+        role=role,
+    )
+    return project_root / "others2"
+
 def get_project_contract_dir(
     projects_root: Path,
     *,
@@ -255,7 +276,7 @@ def get_project_contract_dir(
 ) -> Path:
     # ------------------------------------------------------------
     # Archive/project/<year>/<pno>/contract
-    # - 契約関連書類（見積/契約/発注等）用
+    # - 契約書PDFの格納先
     # ------------------------------------------------------------
     project_root = get_project_root_dir(
         projects_root,

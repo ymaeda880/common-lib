@@ -219,7 +219,6 @@ def _relative_pages_path(project_year: int, project_no: str, json_name: str) -> 
     rel = _report_root_relative_dir(project_year, project_no)
     return f"{rel}/text/{json_name}"
 
-
 def _read_text_file(path: Path) -> str:
     # -----------------------------------------------------------------------------
     # UTF-8 前提で txt を読む
@@ -512,6 +511,7 @@ def resolve_project_report_source(
         )
 
     input_text = _read_text_file(source_text_abs)
+
     if not str(input_text).strip():
         return ProjectSourceResolveResult(
             ok=False,

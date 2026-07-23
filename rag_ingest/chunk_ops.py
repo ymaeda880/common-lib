@@ -400,6 +400,171 @@ def chunk_text(
     )
 
 
+
+# =============================================================================
+# page-aware chunk
+# =============================================================================
+@dataclass(slots=True)
+class _PagedUnit:
+    text: str
+    pages: tuple[int, ...]
+
+
+def _unique_pages(pages: Iterable[int]) -> tuple[int, ...]:
+    out: list[int] = []
+    seen: set[int] = set()
+
+    for p in pages:
+        pp = int(p)
+        if pp <= 0:
+            continue
+        if pp in seen:
+            continue
+        seen.add(pp)
+        out.append(pp)
+
+    return tuple(out)
+
+
+def build_chunks_from_paged_units(
+    units: Sequence[_PagedUnit],
+    *,
+    options: ChunkOptions,
+) -> list[tuple[str, tuple[int, ...]]]:
+    chunks: list[tuple[str, tuple[int, ...]]] = []
+
+    buf = ""
+    buf_pages: list[int] = []
+
+    for unit in units:
+        u = str(unit.text or "").strip()
+        if not u:
+            continue
+
+        if not buf:
+            buf = u
+            buf_pages = list(unit.pages)
+            continue
+
+        cand = f"{buf}\n{u}"
+        cand_pages = list(buf_pages) + list(unit.pages)
+
+        if len(cand) <= options.max_chars:
+            buf = cand
+            buf_pages = cand_pages
+            continue
+
+        if len(buf) >= options.min_chars:
+            chunks.append((buf.strip(), _unique_pages(buf_pages)))
+            buf = u
+            buf_pages = list(unit.pages)
+            continue
+
+        if len(cand) <= options.hard_max_chars:
+            buf = cand
+            buf_pages = cand_pages
+            continue
+
+        chunks.append((buf.strip(), _unique_pages(buf_pages)))
+        buf = u
+        buf_pages = list(unit.pages)
+
+    if buf.strip():
+        chunks.append((buf.strip(), _unique_pages(buf_pages)))
+
+    return [(text, pages) for text, pages in chunks if text]
+
+
+def chunk_text_from_pages(
+    pages: Sequence[dict],
+    *,
+    options: ChunkOptions | None = None,
+) -> tuple[str, list[ChunkRecord], list[tuple[int, int]]]:
+    opt = options or ChunkOptions()
+
+    normalized_page_texts: list[str] = []
+    paged_units: list[_PagedUnit] = []
+
+    for row in pages:
+        if not isinstance(row, dict):
+            continue
+
+        page_no = int(row.get("page", row.get("page_no", 0)) or 0)
+        raw_text = str(row.get("text", "") or "")
+
+        if page_no <= 0:
+            continue
+
+        normalized = normalize_text_for_chunking(raw_text)
+        if not normalized:
+            continue
+
+        normalized_page_texts.append(normalized)
+
+        units = split_text_into_sentence_like_units(normalized)
+        if not units:
+            units = [normalized]
+
+        for unit in units:
+            parts = split_long_unit(unit, opt.hard_max_chars)
+            for part in parts:
+                part_text = str(part or "").strip()
+                if part_text:
+                    paged_units.append(
+                        _PagedUnit(
+                            text=part_text,
+                            pages=(page_no,),
+                        )
+                    )
+
+    ingest_text = "\n".join(normalized_page_texts).strip()
+
+    if not ingest_text or not paged_units:
+        return "", [], []
+
+    chunk_pairs = build_chunks_from_paged_units(
+        paged_units,
+        options=opt,
+    )
+
+    chunks: list[ChunkRecord] = []
+    chunk_page_ranges: list[tuple[int, int]] = []
+
+    cursor = 0
+
+    for idx, (chunk_body, pages_in_chunk) in enumerate(chunk_pairs):
+        text = str(chunk_body or "").strip()
+        if not text:
+            continue
+
+        page_list = [int(p) for p in pages_in_chunk if int(p) > 0]
+
+        if page_list:
+            page_start = min(page_list)
+            page_end = max(page_list)
+        else:
+            page_start = 0
+            page_end = 0
+
+        span_start = cursor
+        span_end = span_start + len(text)
+
+        chunks.append(
+            ChunkRecord(
+                chunk_index=len(chunks),
+                text=text,
+                span_start=span_start,
+                span_end=span_end,
+                chunk_len_tokens=estimate_token_count(text),
+            )
+        )
+
+        chunk_page_ranges.append((int(page_start), int(page_end)))
+
+        cursor = span_end + 1
+
+    return ingest_text, chunks, chunk_page_ranges
+
 # =============================================================================
 # convenience
 # =============================================================================

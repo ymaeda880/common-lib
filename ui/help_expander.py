@@ -14,6 +14,7 @@ from __future__ import annotations
 # imports
 # ============================================================
 import re
+from collections.abc import Callable
 from typing import Any
 
 import streamlit as st
@@ -25,15 +26,35 @@ from common_lib.ui.theme_colors import get_theme_colors_from_banner_key
 # ============================================================
 # themed help expander
 # ============================================================
+# ============================================================
+# themed help expander
+# ============================================================
 def render_themed_help_expander(
     *,
     expander_key: str,
     expander_title: str,
-    tabs: list[tuple[str, str]],
+    tabs: list[
+        tuple[
+            str,
+            str | Callable[[], None],
+        ]
+    ],
     theme: dict[str, Any] | None = None,
     banner_key: str = "navy_dark",
     expanded: bool = False,
+    before_tabs: Callable[[], None] | None = None,
 ) -> None:
+    """
+    テーマ付きの説明expanderを描画する。
+
+    tabsの本文には、次のいずれかを指定できる。
+
+    - Markdown／HTML文字列
+    - 描画処理を行う引数なし関数
+
+    before_tabsには、st.tabs()作成前に実行する
+    CSS適用関数などを指定できる。
+    """
     # ------------------------------------------------------------
     # theme
     # ------------------------------------------------------------
@@ -80,6 +101,15 @@ def render_themed_help_expander(
                 st.caption("説明は未設定です。")
                 return
 
+            # ----------------------------------------------------
+            # タブ作成前の追加処理
+            #
+            # 例：
+            # - タブ用CSSの適用
+            # ----------------------------------------------------
+            if before_tabs is not None:
+                before_tabs()
+
             tab_titles = [
                 title
                 for title, _content in tabs
@@ -94,16 +124,17 @@ def render_themed_help_expander(
                 tabs,
             ):
                 with st_tab:
-                    st.markdown(
-                        content,
-                        unsafe_allow_html=True,
-                    )
-                # with st_tab:
-                #     st.markdown(
-                #         f"""
-                # <div style="font-size:0.90rem; line-height:1.65;">
-                # {content}
-                # </div>
-                # """,
-                #         unsafe_allow_html=True,
-                #     )
+                    # --------------------------------------------
+                    # 関数形式
+                    # --------------------------------------------
+                    if callable(content):
+                        content()
+
+                    # --------------------------------------------
+                    # Markdown／HTML文字列形式
+                    # --------------------------------------------
+                    else:
+                        st.markdown(
+                            content,
+                            unsafe_allow_html=True,
+                        )

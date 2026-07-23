@@ -168,10 +168,23 @@ def _resolve_source_pages_abs_path(
     return archive_root / rel
 
 
+
 def _load_pages_json(
     *,
     pages_json_path: Path,
 ) -> list[dict]:
+    # -----------------------------------------------------------------------------
+    # pages json を読み込み、pages 配列を返す
+    #
+    # 想定形式：
+    # {
+    #   ...
+    #   "pages": [
+    #     {"page_no": 1, "text": "..."},
+    #     ...
+    #   ]
+    # }
+    # -----------------------------------------------------------------------------
     if not Path(pages_json_path).exists():
         raise RuntimeError(f"pages json が存在しません: {pages_json_path}")
 
@@ -180,23 +193,19 @@ def _load_pages_json(
     except Exception as e:
         raise RuntimeError(f"pages json の読込に失敗しました: {pages_json_path} : {e}") from e
 
-    if isinstance(payload, list):
-        pages_payload = payload
-    elif isinstance(payload, dict):
-        pages_payload = payload.get("pages")
-    else:
-        raise RuntimeError(f"pages json の形式が不正です: {pages_json_path}")
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"pages json のトップレベルが dict ではありません: {pages_json_path}")
 
-    if not isinstance(pages_payload, list):
+    pages = payload.get("pages")
+    if not isinstance(pages, list):
         raise RuntimeError(f"pages json に pages 配列がありません: {pages_json_path}")
 
     out: list[dict] = []
-
-    for row in pages_payload:
+    for row in pages:
         if not isinstance(row, dict):
             continue
 
-        page_no = int(row.get("page", row.get("page_no", 0)) or 0)
+        page_no = int(row.get("page_no", 0) or 0)
         page_text = str(row.get("text", "") or "")
 
         if page_no <= 0:
@@ -204,7 +213,7 @@ def _load_pages_json(
 
         out.append(
             {
-                "page": page_no,
+                "page_no": page_no,
                 "text": page_text,
             }
         )
@@ -213,6 +222,8 @@ def _load_pages_json(
         raise RuntimeError(f"pages json の pages 配列が空です: {pages_json_path}")
 
     return out
+
+
 
 def _build_source_text_and_page_ranges_from_pages(
     *,
@@ -446,13 +457,20 @@ def prepare_one_document_payload(
     # -------------------------------------------------------------------------
     # ingest 用全文 + ページ境界表の構築
     # -------------------------------------------------------------------------
-    ingest_text, chunks, chunk_page_ranges = chunk_text_from_pages(
-        pages,
-        options=chunk_options,
+    ingest_text, page_ranges = _build_source_text_and_page_ranges_from_pages(
+        pages=pages,
     )
 
     if not str(ingest_text or "").strip():
         raise RuntimeError("pages json から構築した ingest 用全文が空です。")
+
+    # -------------------------------------------------------------------------
+    # chunk 化
+    # -------------------------------------------------------------------------
+    chunks = chunk_text(
+        str(ingest_text),
+        options=chunk_options,
+    )
 
     if not chunks:
         raise RuntimeError("chunk を生成できませんでした。")
@@ -461,17 +479,14 @@ def prepare_one_document_payload(
     if not chunk_texts:
         raise RuntimeError("有効な chunk テキストが存在しません。")
 
-    page_ranges = [
-        {
-            "page": int(row.get("page", row.get("page_no", 0)) or 0),
-        }
-        for row in pages
-        if int(row.get("page", row.get("page_no", 0)) or 0) > 0
-    ]
-    
+    # -------------------------------------------------------------------------
+    # page_start / page_end 計算
+    # -------------------------------------------------------------------------
+    chunk_page_ranges = _build_chunk_page_ranges(
+        chunks=chunks,
+        page_ranges=page_ranges,
+    )
 
-
-  
     # -------------------------------------------------------------------------
     # embedding
     # -------------------------------------------------------------------------

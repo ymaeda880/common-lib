@@ -137,6 +137,13 @@ from common_lib.project_master.report_check_ops import (
 # report display status ops
 # ------------------------------------------------------------
 from .report_display_status_ops import (
+    TEXT_CHECK_DISPLAY_UNCHECKED,
+    TEXT_CHECK_DISPLAY_OK,
+    TEXT_CHECK_DISPLAY_NEEDS_REVIEW,
+    TEXT_CHECK_DISPLAY_MANUAL_OK,
+    TEXT_CHECK_DISPLAY_MANUAL_SKIP,
     ReportDisplayStatus,
+    ReportTextCheckDisplayStatus,
     build_report_display_status,
+    build_report_text_check_display_status,
 )

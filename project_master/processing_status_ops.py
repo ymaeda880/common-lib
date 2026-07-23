@@ -51,8 +51,40 @@ from common_lib.project_master.paths import (
 # ============================================================
 PROCESSING_STATUS_FILENAME = "processing_status.json"
 
+TEXT_CHECK_KEY_PREFIX = "text_check_"
+
+TEXT_CHECK_LEVEL_OK = "ok"
+TEXT_CHECK_LEVEL_WARNING = "warning"
+TEXT_CHECK_LEVEL_ERROR = "error"
+
 PDF_KIND_TEXT = "text"
 PDF_KIND_IMAGE = "image"
+
+# ------------------------------------------------------------
+# テキストチェック手動確認
+#
+# 自動判定結果は変更せず，
+# RAG作成に支障がないと人が判断した事実を別に保持する
+# ------------------------------------------------------------
+TEXT_CHECK_MANUAL_OK_KEY = "text_check_manual_ok"
+TEXT_CHECK_MANUAL_OK_AT_KEY = "text_check_manual_ok_at"
+TEXT_CHECK_MANUAL_OK_BY_KEY = "text_check_manual_ok_by"
+TEXT_CHECK_MANUAL_OK_REASON_KEY = "text_check_manual_ok_reason"
+TEXT_CHECK_MANUAL_OK_SOURCE_KEY = "text_check_manual_ok_source"
+TEXT_CHECK_MANUAL_OK_SOURCE_SHA256_KEY = (
+    "text_check_manual_ok_source_sha256"
+)
+
+# ------------------------------------------------------------
+# 報告書の手動スキップ
+#
+# 自動テキストチェック結果や手動OKは変更せず，
+# 後続処理から除外する管理者判断を別に保持する
+# ------------------------------------------------------------
+TEXT_CHECK_MANUAL_SKIP_KEY = "text_check_manual_skip"
+TEXT_CHECK_MANUAL_SKIP_AT_KEY = "text_check_manual_skip_at"
+TEXT_CHECK_MANUAL_SKIP_BY_KEY = "text_check_manual_skip_by"
+TEXT_CHECK_MANUAL_SKIP_REASON_KEY = "text_check_manual_skip_reason"
 
 # ============================================================
 # dataclasses
@@ -135,6 +167,40 @@ def _normalize_optional_int(value: Any) -> Optional[int]:
         return None
 
 
+def _normalize_page_numbers(
+    value: Any,
+) -> list[int]:
+    # ------------------------------------------------------------
+    # 問題ページ番号一覧を正規化する
+    #
+    # 機能：
+    # - intへ変換できない値を除外する
+    # - 0以下を除外する
+    # - 重複を除外する
+    # - 昇順に並べる
+    # ------------------------------------------------------------
+    if value is None:
+        return []
+
+    if isinstance(value, (list, tuple, set)):
+        raw_values = value
+    else:
+        raw_values = [value]
+
+    page_numbers: set[int] = set()
+
+    for raw_value in raw_values:
+        try:
+            page_no = int(raw_value)
+        except (TypeError, ValueError):
+            continue
+
+        if page_no >= 1:
+            page_numbers.add(page_no)
+
+    return sorted(page_numbers)
+
+
 def _normalize_bool(value: Any) -> bool:
     # ------------------------------------------------------------
     # bool 正規化
@@ -152,6 +218,39 @@ def _normalize_bool(value: Any) -> bool:
         return int(s) != 0
     except Exception:
         return False
+
+
+def _normalize_sha256(
+    value: Any,
+) -> Optional[str]:
+    # ------------------------------------------------------------
+    # SHA-256文字列を正規化する
+    #
+    # 機能：
+    # - 前後空白を除去する
+    # - 小文字へ統一する
+    # - 64文字の16進文字列だけを受け付ける
+    # ------------------------------------------------------------
+    normalized = _normalize_optional_str(
+        value
+    )
+
+    if normalized is None:
+        return None
+
+    normalized = normalized.lower()
+
+    if len(normalized) != 64:
+        return None
+
+    if any(
+        char not in "0123456789abcdef"
+        for char in normalized
+    ):
+        return None
+
+    return normalized
+
 
 
 def _normalize_pdf_kind(value: Any) -> Optional[str]:
@@ -432,6 +531,78 @@ def read_processing_status(
     )
 
 
+def read_text_check_status(
+    projects_root: Path,
+    *,
+    project_year: int | str,
+    project_no: int | str,
+) -> Dict[str, Any]:
+    # ------------------------------------------------------------
+    # processing_status.jsonから
+    # text_check_*項目だけを読み込む
+    #
+    # 方針：
+    # - processing_status.jsonがなければ空dict
+    # - 既存のProcessingStatusRecordは変更しない
+    # - テキストチェック画面だけが使用する
+    # ------------------------------------------------------------
+    path = get_processing_status_path(
+        projects_root,
+        project_year=project_year,
+        project_no=project_no,
+    )
+
+    if not path.exists():
+        return {}
+
+    payload = _read_json(path)
+
+    return {
+        str(key): value
+        for key, value in payload.items()
+        if str(key).startswith(TEXT_CHECK_KEY_PREFIX)
+    }
+
+def read_text_check_manual_status(
+    projects_root: Path,
+    *,
+    project_year: int | str,
+    project_no: int | str,
+) -> Dict[str, Any]:
+    # ------------------------------------------------------------
+    # 手動確認・手動スキップに関する状態だけを読み込む
+    #
+    # 方針：
+    # - processing_status.jsonがなければ空dict
+    # - 自動テキストチェック結果は返さない
+    # ------------------------------------------------------------
+    text_check_status = read_text_check_status(
+        projects_root,
+        project_year=project_year,
+        project_no=project_no,
+    )
+
+    manual_keys = {
+        TEXT_CHECK_MANUAL_OK_KEY,
+        TEXT_CHECK_MANUAL_OK_AT_KEY,
+        TEXT_CHECK_MANUAL_OK_BY_KEY,
+        TEXT_CHECK_MANUAL_OK_REASON_KEY,
+        TEXT_CHECK_MANUAL_OK_SOURCE_KEY,
+        TEXT_CHECK_MANUAL_OK_SOURCE_SHA256_KEY,
+        TEXT_CHECK_MANUAL_SKIP_KEY,
+        TEXT_CHECK_MANUAL_SKIP_AT_KEY,
+        TEXT_CHECK_MANUAL_SKIP_BY_KEY,
+        TEXT_CHECK_MANUAL_SKIP_REASON_KEY,
+    }
+
+    return {
+        key: text_check_status[key]
+        for key in manual_keys
+        if key in text_check_status
+    }
+
+
+
 # ============================================================
 # public（write / replace）
 # ============================================================
@@ -610,6 +781,585 @@ def mark_cleaned(
         cleaned_at=now_iso,
         cleaned_by=_normalize_optional_str(done_by),
         error_message=None,
+    )
+
+
+def mark_text_check_done(
+    projects_root: Path,
+    *,
+    project_year: int | str,
+    project_no: int | str,
+    done_by: str,
+    source_file: str,
+    check_level: str,
+    problem_pages: list[int] | tuple[int, ...] = (),
+    result_file: str | None = None,
+    check_error_message: str | None = None,
+) -> Path:
+    # ------------------------------------------------------------
+    # テキスト品質チェック結果を記録する
+    #
+    # 正常時：
+    # - チェック済み情報だけを最小限保存する
+    #
+    # 問題あり：
+    # - 問題ページ数
+    # - 問題ページ番号
+    # - 詳細結果ファイル
+    #   を追加保存する
+    #
+    # 再チェック時：
+    # - 過去のtext_check_*項目をいったん削除する
+    # - 古い問題ページ情報を残さない
+    # ------------------------------------------------------------
+    path = get_processing_status_path(
+        projects_root,
+        project_year=project_year,
+        project_no=project_no,
+    )
+
+    # ------------------------------------------------------------
+    # 既存データを読み込む
+    # ------------------------------------------------------------
+    if path.exists():
+        payload = _read_json(path)
+    else:
+        payload = _empty_payload()
+
+    # ------------------------------------------------------------
+    # 過去の自動テキストチェック項目を削除
+    #
+    # warning/errorからokになった場合に，
+    # 古い問題ページ等を残さないため削除する。
+    #
+    # text_check_manual_* は手動確認結果なので，
+    # 通常の再チェックでは削除せず保持する。
+    # ------------------------------------------------------------
+    old_text_check_keys = [
+        key
+        for key in payload
+        if (
+            str(key).startswith(
+                TEXT_CHECK_KEY_PREFIX
+            )
+            and not str(key).startswith(
+                "text_check_manual_"
+            )
+        )
+    ]
+
+    for key in old_text_check_keys:
+        payload.pop(
+            key,
+            None,
+        )
+
+    # ------------------------------------------------------------
+    # 判定レベルを正規化
+    # ------------------------------------------------------------
+    normalized_level = (
+        _normalize_optional_str(check_level)
+        or TEXT_CHECK_LEVEL_ERROR
+    ).lower()
+
+    if normalized_level not in {
+        TEXT_CHECK_LEVEL_OK,
+        TEXT_CHECK_LEVEL_WARNING,
+        TEXT_CHECK_LEVEL_ERROR,
+    }:
+        raise ValueError(
+            f"不正なtext check levelです: {check_level}"
+        )
+
+    normalized_problem_pages = _normalize_page_numbers(
+        problem_pages
+    )
+
+    # ------------------------------------------------------------
+    # 正常・異常に共通する最小項目
+    # ------------------------------------------------------------
+    payload.update(
+        {
+            "text_check_done": True,
+            "text_check_at": _now_iso(),
+            "text_check_by": _normalize_optional_str(
+                done_by
+            ),
+            "text_check_source": _normalize_optional_str(
+                source_file
+            ),
+            "text_check_level": normalized_level,
+        }
+    )
+
+    # ------------------------------------------------------------
+    # 問題がある場合だけ詳細項目を追加
+    # ------------------------------------------------------------
+    if normalized_level != TEXT_CHECK_LEVEL_OK:
+        payload["text_check_problem_page_count"] = len(
+            normalized_problem_pages
+        )
+
+        payload["text_check_problem_pages"] = (
+            normalized_problem_pages
+        )
+
+        normalized_result_file = _normalize_optional_str(
+            result_file
+        )
+
+        if normalized_result_file is not None:
+            payload["text_check_result_file"] = (
+                normalized_result_file
+            )
+
+        normalized_error_message = _normalize_optional_str(
+            check_error_message
+        )
+
+        if normalized_error_message is not None:
+            payload["text_check_error_message"] = (
+                normalized_error_message
+            )
+
+    # ------------------------------------------------------------
+    # atomic write
+    # ------------------------------------------------------------
+    _write_json_atomic(
+        path,
+        payload,
+    )
+
+    return path
+
+
+def mark_text_check_manual_ok(
+    projects_root: Path,
+    *,
+    project_year: int | str,
+    project_no: int | str,
+    done_by: str,
+    reason: str,
+    source_file: str,
+    source_sha256: str,
+) -> Path:
+    # ------------------------------------------------------------
+    # テキストチェック結果を手動OKとして記録する
+    #
+    # 方針：
+    # - 自動判定のtext_check_levelは変更しない
+    # - RAG作成に支障がないと判断した事実だけを追加する
+    # - 判断対象となったページJSONのSHA-256を保存する
+    # - 選択報告書1件だけを対象とする
+    # ------------------------------------------------------------
+    path = get_processing_status_path(
+        projects_root,
+        project_year=project_year,
+        project_no=project_no,
+    )
+
+    # ------------------------------------------------------------
+    # テキストチェック済みであることを確認
+    # ------------------------------------------------------------
+    if not path.exists():
+        raise RuntimeError(
+            "processing_status.jsonが存在しません。"
+            "先にテキストチェックを実行してください。"
+        )
+
+    payload = _read_json(
+        path
+    )
+
+    text_check_done = _normalize_bool(
+        payload.get(
+            "text_check_done"
+        )
+    )
+
+    if not text_check_done:
+        raise RuntimeError(
+            "テキストチェックが未実施です。"
+            "先にテキストチェックを実行してください。"
+        )
+
+    # ------------------------------------------------------------
+    # 自動テキストチェック結果を確認
+    #
+    # warning・errorのどちらであっても，
+    # 最終的なRAG作成可否は管理者が手動で判断できる。
+    # ------------------------------------------------------------
+    check_level = (
+        _normalize_optional_str(
+            payload.get(
+                "text_check_level"
+            )
+        )
+        or ""
+    ).lower()
+
+    if check_level not in {
+        TEXT_CHECK_LEVEL_OK,
+        TEXT_CHECK_LEVEL_WARNING,
+        TEXT_CHECK_LEVEL_ERROR,
+    }:
+        raise RuntimeError(
+            "有効なテキストチェック結果がありません。"
+            "先にテキストチェックを再実行してください。"
+        )
+
+    # ------------------------------------------------------------
+    # 操作者を確認
+    # ------------------------------------------------------------
+    normalized_done_by = _normalize_optional_str(
+        done_by
+    )
+
+    if normalized_done_by is None:
+        raise ValueError(
+            "手動確認者が指定されていません。"
+        )
+
+    # ------------------------------------------------------------
+    # 判断理由を確認
+    # ------------------------------------------------------------
+    normalized_reason = _normalize_optional_str(
+        reason
+    )
+
+    if normalized_reason is None:
+        raise ValueError(
+            "手動OKとする理由を入力してください。"
+        )
+
+    # ------------------------------------------------------------
+    # 対象テキストJSONを確認
+    # ------------------------------------------------------------
+    normalized_source_file = _normalize_optional_str(
+        source_file
+    )
+
+    if normalized_source_file is None:
+        raise ValueError(
+            "手動確認対象のテキストJSONが指定されていません。"
+        )
+
+    checked_source_file = _normalize_optional_str(
+        payload.get(
+            "text_check_source"
+        )
+    )
+
+    if checked_source_file is None:
+        raise RuntimeError(
+            "テキストチェック対象ファイルが記録されていません。"
+            "テキストチェックを再実行してください。"
+        )
+
+    if normalized_source_file != checked_source_file:
+        raise RuntimeError(
+            "現在の確認対象と，テキストチェック時の対象が"
+            "一致していません。"
+            "テキストチェックを再実行してください。"
+        )
+
+    # ------------------------------------------------------------
+    # SHA-256を確認
+    # ------------------------------------------------------------
+    normalized_source_sha256 = _normalize_sha256(
+        source_sha256
+    )
+
+    if normalized_source_sha256 is None:
+        raise ValueError(
+            "確認対象テキストJSONのSHA-256が不正です。"
+        )
+
+    # ------------------------------------------------------------
+    # 手動OK情報だけを追加
+    #
+    # text_check_level等の自動判定情報は変更しない
+    # ------------------------------------------------------------
+    payload.update(
+        {
+            TEXT_CHECK_MANUAL_OK_KEY: True,
+            TEXT_CHECK_MANUAL_OK_AT_KEY: _now_iso(),
+            TEXT_CHECK_MANUAL_OK_BY_KEY: normalized_done_by,
+            TEXT_CHECK_MANUAL_OK_REASON_KEY: normalized_reason,
+            TEXT_CHECK_MANUAL_OK_SOURCE_KEY: normalized_source_file,
+            TEXT_CHECK_MANUAL_OK_SOURCE_SHA256_KEY: (
+                normalized_source_sha256
+            ),
+        }
+    )
+
+    _write_json_atomic(
+        path,
+        payload,
+    )
+
+    return path
+
+
+def clear_text_check_manual_ok(
+    projects_root: Path,
+    *,
+    project_year: int | str,
+    project_no: int | str,
+) -> Path:
+    # ------------------------------------------------------------
+    # 手動OK状態を解除する
+    #
+    # 方針：
+    # - 自動テキストチェック結果は残す
+    # - text_check_manual_*項目だけを削除する
+    # - processing_status.jsonがない場合はエラーとする
+    # ------------------------------------------------------------
+    path = get_processing_status_path(
+        projects_root,
+        project_year=project_year,
+        project_no=project_no,
+    )
+
+    if not path.exists():
+        raise RuntimeError(
+            "processing_status.jsonが存在しません。"
+        )
+
+    payload = _read_json(
+        path
+    )
+
+    manual_keys = (
+        TEXT_CHECK_MANUAL_OK_KEY,
+        TEXT_CHECK_MANUAL_OK_AT_KEY,
+        TEXT_CHECK_MANUAL_OK_BY_KEY,
+        TEXT_CHECK_MANUAL_OK_REASON_KEY,
+        TEXT_CHECK_MANUAL_OK_SOURCE_KEY,
+        TEXT_CHECK_MANUAL_OK_SOURCE_SHA256_KEY,
+    )
+
+    for key in manual_keys:
+        payload.pop(
+            key,
+            None,
+        )
+
+    _write_json_atomic(
+        path,
+        payload,
+    )
+
+    return path
+
+def is_text_check_manual_ok_valid(
+    projects_root: Path,
+    *,
+    project_year: int | str,
+    project_no: int | str,
+    source_file: str,
+    source_sha256: str,
+) -> bool:
+    # ------------------------------------------------------------
+    # 保存済みの手動OKが現在のテキストに対して有効か判定する
+    #
+    # 有効条件：
+    # - text_check_manual_okがTrue
+    # - 対象ファイル名が一致
+    # - 対象ファイルのSHA-256が一致
+    # - 自動チェック対象ファイルとも一致
+    # ------------------------------------------------------------
+    status = read_text_check_status(
+        projects_root,
+        project_year=project_year,
+        project_no=project_no,
+    )
+
+    if not _normalize_bool(
+        status.get(
+            TEXT_CHECK_MANUAL_OK_KEY
+        )
+    ):
+        return False
+
+    saved_source_file = _normalize_optional_str(
+        status.get(
+            TEXT_CHECK_MANUAL_OK_SOURCE_KEY
+        )
+    )
+
+    current_source_file = _normalize_optional_str(
+        source_file
+    )
+
+    checked_source_file = _normalize_optional_str(
+        status.get(
+            "text_check_source"
+        )
+    )
+
+    if (
+        saved_source_file is None
+        or current_source_file is None
+        or checked_source_file is None
+    ):
+        return False
+
+    if saved_source_file != current_source_file:
+        return False
+
+    if saved_source_file != checked_source_file:
+        return False
+
+    saved_sha256 = _normalize_sha256(
+        status.get(
+            TEXT_CHECK_MANUAL_OK_SOURCE_SHA256_KEY
+        )
+    )
+
+    current_sha256 = _normalize_sha256(
+        source_sha256
+    )
+
+    if saved_sha256 is None or current_sha256 is None:
+        return False
+
+    return saved_sha256 == current_sha256
+
+
+# ============================================================
+# public（報告書の手動スキップ）
+# ============================================================
+def mark_text_check_manual_skip(
+    projects_root: Path,
+    *,
+    project_year: int | str,
+    project_no: int | str,
+    done_by: str,
+    reason: str,
+) -> Path:
+    # ------------------------------------------------------------
+    # 報告書を手動スキップ対象として記録する
+    #
+    # 方針：
+    # - 自動テキストチェック結果は変更しない
+    # - 手動OK情報も変更しない
+    # - ページJSONのSHA-256とは連動させない
+    # - processing_status.jsonがなければ新規作成する
+    # ------------------------------------------------------------
+    normalized_done_by = _normalize_optional_str(done_by)
+
+    if normalized_done_by is None:
+        raise ValueError(
+            "手動スキップの設定者が指定されていません。"
+        )
+
+    normalized_reason = _normalize_optional_str(reason)
+
+    if normalized_reason is None:
+        raise ValueError(
+            "手動スキップとする理由を入力してください。"
+        )
+
+    path = get_processing_status_path(
+        projects_root,
+        project_year=project_year,
+        project_no=project_no,
+    )
+
+    if path.exists():
+        payload = _read_json(path)
+    else:
+        payload = _empty_payload()
+
+    payload.update(
+        {
+            TEXT_CHECK_MANUAL_SKIP_KEY: True,
+            TEXT_CHECK_MANUAL_SKIP_AT_KEY: _now_iso(),
+            TEXT_CHECK_MANUAL_SKIP_BY_KEY: normalized_done_by,
+            TEXT_CHECK_MANUAL_SKIP_REASON_KEY: normalized_reason,
+        }
+    )
+
+    _write_json_atomic(
+        path,
+        payload,
+    )
+
+    return path
+
+
+def clear_text_check_manual_skip(
+    projects_root: Path,
+    *,
+    project_year: int | str,
+    project_no: int | str,
+) -> Path:
+    # ------------------------------------------------------------
+    # 報告書の手動スキップ状態を解除する
+    #
+    # 方針：
+    # - 自動テキストチェック結果は残す
+    # - 手動OK情報も残す
+    # - 手動スキップ関係の項目だけを削除する
+    # ------------------------------------------------------------
+    path = get_processing_status_path(
+        projects_root,
+        project_year=project_year,
+        project_no=project_no,
+    )
+
+    if not path.exists():
+        raise RuntimeError(
+            "processing_status.jsonが存在しません。"
+        )
+
+    payload = _read_json(path)
+
+    manual_skip_keys = (
+        TEXT_CHECK_MANUAL_SKIP_KEY,
+        TEXT_CHECK_MANUAL_SKIP_AT_KEY,
+        TEXT_CHECK_MANUAL_SKIP_BY_KEY,
+        TEXT_CHECK_MANUAL_SKIP_REASON_KEY,
+    )
+
+    for key in manual_skip_keys:
+        payload.pop(
+            key,
+            None,
+        )
+
+    _write_json_atomic(
+        path,
+        payload,
+    )
+
+    return path
+
+
+def is_text_check_manual_skip(
+    projects_root: Path,
+    *,
+    project_year: int | str,
+    project_no: int | str,
+) -> bool:
+    # ------------------------------------------------------------
+    # 報告書が手動スキップ対象か判定する
+    #
+    # processing_status.jsonが存在しない場合や，
+    # キーが未設定の場合はFalseとする
+    # ------------------------------------------------------------
+    status = read_text_check_status(
+        projects_root,
+        project_year=project_year,
+        project_no=project_no,
+    )
+
+    return _normalize_bool(
+        status.get(
+            TEXT_CHECK_MANUAL_SKIP_KEY,
+            False,
+        )
     )
 
 

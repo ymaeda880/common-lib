@@ -28,7 +28,7 @@ from __future__ import annotations
 # ============================================================
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Callable, Any
 
 # ============================================================
 # imports（common_lib/project_master）
@@ -76,9 +76,14 @@ REPORT_RAW_TXT_NAME = "report_raw.txt"
 
 ACTION_SKIPPED = "skipped"
 ACTION_PROCESSED_TEXT_PDF = "processed_text_pdf"
+ACTION_REPLACED_TEXT_PDF = "replaced_text_pdf"
 ACTION_PROCESSED_IMAGE_PDF = "processed_image_pdf"
 ACTION_ERROR = "error"
 
+# ============================================================
+# progress callback
+# ============================================================
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 # ============================================================
 # result models
@@ -105,6 +110,12 @@ class ReportCheckItemResult:
 class ReportCheckYearResult:
     # ------------------------------------------------------------
     # 年度一括結果
+    #
+    # processed_text_count
+    #     新規に直接抽出した text PDF 件数
+    #
+    # replaced_text_count
+    #     抽出済みファイルを再抽出して置換した件数
     # ------------------------------------------------------------
     project_year: int
     total_count: int
@@ -112,6 +123,7 @@ class ReportCheckYearResult:
     skipped_count: int
     error_count: int
     processed_text_count: int
+    replaced_text_count: int
     processed_image_count: int
     results: List[ReportCheckItemResult]
     message: str
@@ -218,6 +230,7 @@ def check_one_report_pdf(
     project_no: int | str,
     done_by: str,
     role: str = "main",
+    replace_extracted: bool = False,
 ) -> ReportCheckItemResult:
     # ------------------------------------------------------------
     # 1件の報告書PDFをチェックする
@@ -268,30 +281,56 @@ def check_one_report_pdf(
         project_no=pno3,
     )
 
+
     # ------------------------------------------------------------
-    # 既処理判定
-    # - text PDF / image PDF どちらかで条件を満たせば skip
+    # text PDF の処理済み判定
+    #
+    # replace_extracted=False
+    #     抽出済みの場合はスキップする
+    #
+    # replace_extracted=True
+    #     抽出済みでも処理を続行し，rawファイルを置換する
     # ------------------------------------------------------------
-    if _is_processed_text_pdf(
+    already_processed_text = _is_processed_text_pdf(
         current_sha256=pdf_sha256,
         rec=rec,
         raw_txt_path=raw_txt_path,
         raw_pages_json_path=raw_pages_json_path,
-    ):
+    )
+
+    if already_processed_text and not replace_extracted:
+        # ------------------------------------------------------------
+        # 新規抽出／置換を区別して結果を返す
+        # ------------------------------------------------------------
+        if already_processed_text:
+            result_action = ACTION_REPLACED_TEXT_PDF
+            result_message = (
+                "抽出済みの text PDF を再抽出し，"
+                "report_raw.txt / report_raw_pages.json を置換しました。"
+            )
+        else:
+            result_action = ACTION_PROCESSED_TEXT_PDF
+            result_message = (
+                "text PDF を判定し，page_count取得・text抽出・"
+                "report_raw_pages.json 作成を実行しました。"
+            )
+
         return ReportCheckItemResult(
             project_year=int(y),
             project_no=str(pno3),
             pdf_filename=pdf_filename,
             source_pdf_sha256=pdf_sha256,
-            action=ACTION_SKIPPED,
+            action=result_action,
             pdf_kind="text",
-            page_count=int(getattr(rec, "page_count", 0) or 0),
+            page_count=int(page_count),
             raw_text_path=str(raw_txt_path),
-            processing_status_path=str(getattr(rec, "path", "")),
-            message="すでに処理済み（text PDF・report_raw.txt / report_raw_pages.json 作成済み）",
+            processing_status_path=str(processing_status_path),
+            message=result_message,
             error_message=None,
         )
 
+
+    
     if _is_processed_image_pdf(
         current_sha256=pdf_sha256,
         rec=rec,
@@ -428,6 +467,8 @@ def check_report_pdfs_by_year(
     project_year: int | str,
     done_by: str,
     role: str = "main",
+    replace_extracted: bool = False,
+    progress_callback: ProgressCallback | None = None,
 ) -> ReportCheckYearResult:
     # ------------------------------------------------------------
     # 指定年度の全報告書PDFを一括チェックする
@@ -450,9 +491,33 @@ def check_report_pdfs_by_year(
     skipped_count = 0
     error_count = 0
     processed_text_count = 0
+    replaced_text_count = 0
     processed_image_count = 0
 
-    for item in items:
+    total_count = len(items)
+
+    for index, item in enumerate(items, start=1):
+
+        # ------------------------------------------------------------
+        # progress
+        # ------------------------------------------------------------
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "current": index,
+                    "total": total_count,
+                    "project_year": int(item.project_year),
+                    "project_no": str(item.project_no),
+                    "pdf_filename": str(
+                        getattr(item, "pdf_filename", "") or ""
+                    ),
+                    "message": (
+                        f"{index:,}/{total_count:,} "
+                        f"{item.project_year}-{item.project_no}"
+                    ),
+                }
+            )
+
         # ------------------------------------------------------------
         # ロック済みのみ処理
         # ------------------------------------------------------------
@@ -482,6 +547,7 @@ def check_report_pdfs_by_year(
                 project_no=str(item.project_no),
                 done_by=str(done_by),
                 role=role,
+                replace_extracted=bool(replace_extracted),
             )
         except Exception as e:
             one = ReportCheckItemResult(
@@ -502,16 +568,21 @@ def check_report_pdfs_by_year(
 
         if one.action == ACTION_SKIPPED:
             skipped_count += 1
+
         elif one.action == ACTION_PROCESSED_TEXT_PDF:
             processed_count += 1
             processed_text_count += 1
+
+        elif one.action == ACTION_REPLACED_TEXT_PDF:
+            processed_count += 1
+            replaced_text_count += 1
+
         elif one.action == ACTION_PROCESSED_IMAGE_PDF:
             processed_count += 1
             processed_image_count += 1
+
         elif one.action == ACTION_ERROR:
             error_count += 1
-
-    total_count = len(items)
 
     if total_count == 0:
         message = "この年度には報告書PDFがありません。"
@@ -519,11 +590,12 @@ def check_report_pdfs_by_year(
         message = "この年度のPDFはすべてスキップでした（未ロックまたは処理済み）。"
     else:
         message = (
-            f"完了: 全PDF={total_count} / "
-            f"今回処理={processed_count} "
-            f"(text={processed_text_count}, image={processed_image_count}) / "
-            f"スキップ={skipped_count} / "
-            f"エラー={error_count}"
+            f"完了：対象={total_count}件 / "
+            f"新規抽出={processed_text_count}件 / "
+            f"置換={replaced_text_count}件 / "
+            f"画像PDF判定={processed_image_count}件 / "
+            f"スキップ={skipped_count}件 / "
+            f"エラー={error_count}件"
         )
 
     return ReportCheckYearResult(
@@ -533,6 +605,7 @@ def check_report_pdfs_by_year(
         skipped_count=int(skipped_count),
         error_count=int(error_count),
         processed_text_count=int(processed_text_count),
+        replaced_text_count=int(replaced_text_count),
         processed_image_count=int(processed_image_count),
         results=results,
         message=message,
