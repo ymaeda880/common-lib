@@ -29,6 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Callable, Any
+import shutil
 
 # ============================================================
 # imports（common_lib/project_master）
@@ -158,6 +159,23 @@ def _get_report_raw_txt_path(*, text_dir: Path) -> Path:
     # ------------------------------------------------------------
     return text_dir / REPORT_RAW_TXT_NAME
 
+def _clear_text_dir(*, text_dir: Path) -> None:
+    # ------------------------------------------------------------
+    # 再抽出前に text フォルダ内を初期化する
+    #
+    # processing_status.jsonを含む全ファイル・全フォルダを削除し，
+    # 後続処理でPDF情報とraw抽出状態を新しく作り直す。
+    # ------------------------------------------------------------
+    _require_existing_dir(
+        dir_path=text_dir,
+        name="text_dir",
+    )
+
+    for child in text_dir.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
 
 # ============================================================
 # helpers（status / skip 判定）
@@ -299,34 +317,32 @@ def check_one_report_pdf(
     )
 
     if already_processed_text and not replace_extracted:
-        # ------------------------------------------------------------
-        # 新規抽出／置換を区別して結果を返す
-        # ------------------------------------------------------------
-        if already_processed_text:
-            result_action = ACTION_REPLACED_TEXT_PDF
-            result_message = (
-                "抽出済みの text PDF を再抽出し，"
-                "report_raw.txt / report_raw_pages.json を置換しました。"
-            )
-        else:
-            result_action = ACTION_PROCESSED_TEXT_PDF
-            result_message = (
-                "text PDF を判定し，page_count取得・text抽出・"
-                "report_raw_pages.json 作成を実行しました。"
-            )
-
         return ReportCheckItemResult(
             project_year=int(y),
             project_no=str(pno3),
             pdf_filename=pdf_filename,
             source_pdf_sha256=pdf_sha256,
-            action=result_action,
+            action=ACTION_SKIPPED,
             pdf_kind="text",
-            page_count=int(page_count),
+            page_count=int(
+                getattr(rec, "page_count", 0) or 0
+            ),
             raw_text_path=str(raw_txt_path),
-            processing_status_path=str(processing_status_path),
-            message=result_message,
+            processing_status_path=str(
+                getattr(rec, "path", "") or ""
+            ),
+            message="すでに処理済み（text PDF）",
             error_message=None,
+        )
+
+    is_reextract = bool(
+        already_processed_text
+        and replace_extracted
+    )
+
+    if is_reextract:
+        _clear_text_dir(
+            text_dir=text_dir,
         )
 
 
@@ -426,19 +442,38 @@ def check_one_report_pdf(
             done_by=str(done_by),
         )
 
+        if is_reextract:
+            result_action = ACTION_REPLACED_TEXT_PDF
+            result_message = (
+                "textフォルダを初期化してから再抽出し，"
+                "report_raw.txt / report_raw_pages.jsonを"
+                "再作成しました。"
+            )
+        else:
+            result_action = ACTION_PROCESSED_TEXT_PDF
+            result_message = (
+                "text PDFを判定し，page_count取得・"
+                "text抽出・report_raw_pages.json作成を"
+                "実行しました。"
+            )
+
         return ReportCheckItemResult(
             project_year=int(y),
             project_no=str(pno3),
             pdf_filename=pdf_filename,
             source_pdf_sha256=pdf_sha256,
-            action=ACTION_PROCESSED_TEXT_PDF,
+            action=result_action,
             pdf_kind="text",
             page_count=int(page_count),
             raw_text_path=str(raw_txt_path),
-            processing_status_path=str(processing_status_path),
-            message="text PDF を判定し、page_count取得・text抽出・report_raw_pages.json 作成を実行しました。",
+            processing_status_path=str(
+                processing_status_path
+            ),
+            message=result_message,
             error_message=None,
         )
+
+
 
     # ------------------------------------------------------------
     # image PDF の場合：ここでは OCR しない

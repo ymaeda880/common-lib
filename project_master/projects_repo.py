@@ -282,3 +282,108 @@ def update_project(
         raise
     finally:
         conn.close()
+
+
+# ============================================================
+# public（count by year）
+# ============================================================
+def count_projects_by_year(
+    projects_root: Path,
+    *,
+    project_year: int | str,
+    role: str = "main",
+) -> int:
+    # ------------------------------------------------------------
+    # projectsから指定年度の件数を取得する
+    # ------------------------------------------------------------
+    y = normalize_year_4digits(project_year)
+
+    db_path = get_project_master_db_path(
+        projects_root,
+        role=role,
+    )
+
+    _require_projects_table(db_path)
+
+    conn = _connect(db_path)
+
+    try:
+        cur = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM projects
+            WHERE project_year=?
+            """,
+            (y,),
+        )
+
+        row = cur.fetchone()
+
+        if row is None:
+            return 0
+
+        return int(dict(row)["n"])
+
+    finally:
+        conn.close()
+
+
+# ============================================================
+# public（delete by year）
+# ============================================================
+def delete_projects_by_year(
+    projects_root: Path,
+    *,
+    project_year: int | str,
+    role: str = "main",
+) -> int:
+    # ------------------------------------------------------------
+    # projectsから指定年度のレコードを一括削除する
+    #
+    # 戻り値：
+    # - 削除したレコード件数
+    # ------------------------------------------------------------
+    y = normalize_year_4digits(project_year)
+
+    db_path = get_project_master_db_path(
+        projects_root,
+        role=role,
+    )
+
+    _require_projects_table(db_path)
+
+    conn = _connect(db_path)
+
+    try:
+        conn.execute("BEGIN;")
+
+        conn.execute(
+            """
+            DELETE FROM projects
+            WHERE project_year=?
+            """,
+            (y,),
+        )
+
+        cur = conn.execute(
+            "SELECT changes() AS n"
+        )
+
+        row = cur.fetchone()
+
+        deleted_count = (
+            int(dict(row)["n"])
+            if row is not None
+            else 0
+        )
+
+        conn.execute("COMMIT;")
+
+        return deleted_count
+
+    except Exception:
+        conn.execute("ROLLBACK;")
+        raise
+
+    finally:
+        conn.close()

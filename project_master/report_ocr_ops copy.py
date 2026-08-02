@@ -82,9 +82,6 @@ from common_lib.ai.routing import call_vision_text
 # ============================================================
 REPORT_RAW_TXT_NAME = "report_raw.txt"
 REPORT_CLEAN_TXT_NAME = "report_clean.txt"
-REPORT_RAW_PAGES_JSON_NAME = "report_raw_pages.json"
-REPORT_CLEAN_PAGES_JSON_NAME = "report_clean_pages.json"
-OCR_PROGRESS_JSON_NAME = "report_ocr_progress.json"
 EXTRACT_META_JSON_NAME = "extract_meta.json"
 OCR_PDF_SUFFIX = "_ocr.pdf"
 
@@ -244,22 +241,20 @@ def _run_tesseract_ocr_by_page(
     fitz,
     pdf_bytes: bytes,
     page_count_total: int,
-    start_page: int,
-    end_page: int,
     ocr_lang: str,
     ocr_dpi: int,
     progress_callback=None,
 ) -> tuple[list[str], bytes]:
     # ------------------------------------------------------------
-    # 指定範囲をTesseract OCRする
-    # - start_page / end_page は1始まり
-    # - callbackへはPDF全体上のページ番号を渡す
+    # Tesseract OCR をページごとに実行する
+    # - ページごとに progress_callback を呼ぶ
+    # - 1ページOCR済みPDFを結合して、OCR済みPDF bytesも返す
     # ------------------------------------------------------------
     raw_page_texts: list[str] = []
 
     out_doc = fitz.open()
     try:
-        for page_no in range(int(start_page), int(end_page) + 1):
+        for page_no in range(1, int(page_count_total) + 1):
             one_ocr_pdf_bytes = build_ocr_pdf_bytes(
                 fitz=fitz,
                 pdf_bytes=pdf_bytes,
@@ -367,272 +362,6 @@ def _build_default_clean_options() -> CleanOptions:
 
 
 # ============================================================
-# helpers（ページ範囲・ページJSON・進捗）
-# ============================================================
-def _normalize_page_range(
-    *,
-    page_count_total: int,
-    start_page: int | None,
-    end_page: int | None,
-) -> tuple[int, int]:
-    # ------------------------------------------------------------
-    # 1始まりのページ範囲をPDF内へ収める
-    # ------------------------------------------------------------
-    start = 1 if start_page is None else int(start_page)
-    end = int(page_count_total) if end_page is None else int(end_page)
-
-    if start < 1:
-        raise RuntimeError(f"開始ページは1以上で指定してください。 start_page={start}")
-    if end < start:
-        raise RuntimeError(
-            f"終了ページは開始ページ以上で指定してください。 "
-            f"start_page={start} end_page={end}"
-        )
-    if start > int(page_count_total):
-        raise RuntimeError(
-            f"開始ページが総ページ数を超えています。 "
-            f"start_page={start} page_count={page_count_total}"
-        )
-
-    return start, min(end, int(page_count_total))
-
-
-def _read_pages_text_list(
-    *,
-    path: Path,
-    page_count_total: int,
-) -> list[str]:
-    # ------------------------------------------------------------
-    # pages JSONを読み込み，総ページ数分のlist[str]へ正規化する
-    # - create_clean_pages_json系の複数形式を許容する
-    # - 読めない場合は空ページで初期化する
-    # ------------------------------------------------------------
-    result = ["" for _ in range(int(page_count_total))]
-
-    if not path.exists():
-        return result
-
-    try:
-        obj = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return result
-
-    if isinstance(obj, list):
-        if all(isinstance(x, str) for x in obj):
-            for index, text in enumerate(obj[:page_count_total]):
-                result[index] = str(text or "")
-            return result
-        pages_obj = obj
-    elif isinstance(obj, dict):
-        pages_obj = obj.get("pages")
-        if not isinstance(pages_obj, list):
-            pages_obj = obj.get("page_texts")
-        if not isinstance(pages_obj, list):
-            pages_obj = obj.get("pages_text_list")
-        if not isinstance(pages_obj, list):
-            return result
-    else:
-        return result
-
-    for index, page_obj in enumerate(pages_obj):
-        if isinstance(page_obj, str):
-            if index < int(page_count_total):
-                result[index] = str(page_obj or "")
-            continue
-
-        if not isinstance(page_obj, dict):
-            continue
-
-        page_no_value = (
-            page_obj.get("page_no")
-            or page_obj.get("page_number")
-            or page_obj.get("page")
-            or index + 1
-        )
-        try:
-            page_no = int(page_no_value)
-        except (TypeError, ValueError):
-            continue
-
-        text = (
-            page_obj.get("text")
-            if "text" in page_obj
-            else page_obj.get("page_text", "")
-        )
-
-        if 1 <= page_no <= int(page_count_total):
-            result[page_no - 1] = str(text or "")
-
-    return result
-
-
-def _write_pages_json(
-    *,
-    path: Path,
-    project_year: int,
-    project_no: str,
-    pdf_filename: str,
-    source_pdf_sha256: str,
-    pages_text_list: list[str],
-) -> None:
-    # ------------------------------------------------------------
-    # 107_異常文字ocr処理と同じページJSON形式で保存する
-    # ------------------------------------------------------------
-    create_clean_pages_json(
-        path,
-        collection_id="project",
-        shard_id=str(int(project_year)),
-        doc_id=f"{int(project_year):04d}-{str(project_no)}",
-        pdf_filename=str(pdf_filename),
-        source_pdf_sha256=str(source_pdf_sha256),
-        pages_text_list=list(pages_text_list),
-    )
-
-
-def _read_completed_pages(
-    *,
-    progress_path: Path,
-    source_pdf_sha256: str,
-    page_count_total: int,
-) -> set[int]:
-    # ------------------------------------------------------------
-    # OCR完了ページ番号を読み込む
-    # - PDF差替え時は古い進捗を使わない
-    # ------------------------------------------------------------
-    obj = _read_json_dict(progress_path)
-
-    if str(obj.get("source_pdf_sha256") or "") != str(source_pdf_sha256 or ""):
-        return set()
-
-    completed: set[int] = set()
-    for value in obj.get("completed_pages") or []:
-        try:
-            page_no = int(value)
-        except (TypeError, ValueError):
-            continue
-        if 1 <= page_no <= int(page_count_total):
-            completed.add(page_no)
-
-    return completed
-
-
-def _write_ocr_progress(
-    *,
-    progress_path: Path,
-    source_pdf_filename: str,
-    source_pdf_sha256: str,
-    page_count_total: int,
-    completed_pages: set[int],
-    last_start_page: int,
-    last_end_page: int,
-    done_by: str,
-) -> None:
-    # ------------------------------------------------------------
-    # 翌日の続き処理に必要なOCR進捗を保存する
-    # ------------------------------------------------------------
-    completed_sorted = sorted(int(x) for x in completed_pages)
-    next_page = next(
-        (
-            page_no
-            for page_no in range(1, int(page_count_total) + 1)
-            if page_no not in completed_pages
-        ),
-        None,
-    )
-
-    _atomic_write_json(
-        progress_path,
-        {
-            "source_pdf_filename": str(source_pdf_filename or ""),
-            "source_pdf_sha256": str(source_pdf_sha256 or ""),
-            "page_count_total": int(page_count_total),
-            "completed_pages": completed_sorted,
-            "completed_page_count": len(completed_sorted),
-            "next_page": next_page,
-            "last_processed_range": {
-                "start_page": int(last_start_page),
-                "end_page": int(last_end_page),
-            },
-            "ocr_done": len(completed_sorted) == int(page_count_total),
-            "updated_at": dt.datetime.now().replace(microsecond=0).isoformat(),
-            "done_by": str(done_by or ""),
-        },
-    )
-
-
-def _slice_pdf_bytes(
-    *,
-    fitz,
-    pdf_bytes: bytes,
-    start_page: int,
-    end_page: int,
-) -> bytes:
-    # ------------------------------------------------------------
-    # GPT OCRへ渡す指定範囲だけのPDFを作る
-    # ------------------------------------------------------------
-    src_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    out_doc = fitz.open()
-    try:
-        out_doc.insert_pdf(
-            src_doc,
-            from_page=int(start_page) - 1,
-            to_page=int(end_page) - 1,
-        )
-        return out_doc.tobytes()
-    finally:
-        out_doc.close()
-        src_doc.close()
-
-
-def _merge_tesseract_ocr_pdf_range(
-    *,
-    fitz,
-    original_pdf_bytes: bytes,
-    existing_ocr_pdf_path: Path,
-    range_ocr_pdf_bytes: bytes,
-    start_page: int,
-    end_page: int,
-    page_count_total: int,
-) -> bytes:
-    # ------------------------------------------------------------
-    # 指定範囲のOCR済みページを，全ページ構成のOCR PDFへ差し込む
-    # - 既存OCR PDFがあればそれを基礎にする
-    # - 無ければ元PDFを基礎にする
-    # ------------------------------------------------------------
-    base_bytes = (
-        existing_ocr_pdf_path.read_bytes()
-        if existing_ocr_pdf_path.exists()
-        else original_pdf_bytes
-    )
-
-    base_doc = fitz.open(stream=base_bytes, filetype="pdf")
-    range_doc = fitz.open(stream=range_ocr_pdf_bytes, filetype="pdf")
-    out_doc = fitz.open()
-
-    try:
-        for page_no in range(1, int(page_count_total) + 1):
-            if int(start_page) <= page_no <= int(end_page):
-                range_index = page_no - int(start_page)
-                out_doc.insert_pdf(
-                    range_doc,
-                    from_page=range_index,
-                    to_page=range_index,
-                )
-            else:
-                out_doc.insert_pdf(
-                    base_doc,
-                    from_page=page_no - 1,
-                    to_page=page_no - 1,
-                )
-
-        return out_doc.tobytes()
-    finally:
-        out_doc.close()
-        range_doc.close()
-        base_doc.close()
-
-
-# ============================================================
 # public（OCR pipeline）
 # ============================================================
 def run_report_ocr_pipeline(
@@ -647,17 +376,17 @@ def run_report_ocr_pipeline(
     method: str = "gpt_vision",
     gpt_model: str = "gpt-4.1-mini",
     gpt_max_output_tokens: int | None = 4000,
-    start_page: int | None = None,
-    end_page: int | None = None,
-    merge_existing: bool = True,
     progress_callback=None,
 ) -> dict[str, object]:
     # ------------------------------------------------------------
-    # 報告書1件の指定ページ範囲だけをOCRする
+    # 報告書1件に対して OCR / text抽出 / clean保存 を実行する
     #
-    # - start_page / end_page は1始まり
-    # - merge_existing=True の場合，過去のページ結果を残して範囲分だけ更新
-    # - 全ページ完了時だけ processing_status.json の ocr_done を立てる
+    # method:
+    # - gpt_vision
+    # - pymupdf_tesseract
+    #
+    # 戻り値:
+    # - ai_results は gpt_vision の場合のみ中身あり
     # ------------------------------------------------------------
     y = normalize_year_4digits(project_year)
     pno3 = normalize_pno_3digits(project_no)
@@ -666,6 +395,9 @@ def run_report_ocr_pipeline(
     if method_key not in ("gpt_vision", "pymupdf_tesseract"):
         raise RuntimeError(f"OCR方式が不正です。 method={method_key}")
 
+    # ------------------------------------------------------------
+    # project / PDF存在確認
+    # ------------------------------------------------------------
     project = _require_project(projects_root, year=y, pno3=pno3, role=role)
 
     pdf_path = get_report_pdf_path(
@@ -680,6 +412,9 @@ def run_report_ocr_pipeline(
     pdf_bytes = pdf_path.read_bytes()
     pdf_sha256 = sha256_bytes(pdf_bytes)
 
+    # ------------------------------------------------------------
+    # dirs
+    # ------------------------------------------------------------
     ocr_dir = get_project_ocr_dir(
         projects_root,
         project_year=y,
@@ -695,13 +430,17 @@ def run_report_ocr_pipeline(
     _require_existing_dir(dir_path=ocr_dir, name="ocr_dir")
     _require_existing_dir(dir_path=text_dir, name="text_dir")
 
+    # ------------------------------------------------------------
+    # fitz
+    # ------------------------------------------------------------
     fitz_res = try_import_fitz()
     if (not fitz_res.ok) or (fitz_res.fitz is None):
-        raise RuntimeError(
-            f"PyMuPDF（fitz）が利用できません。 import error: {fitz_res.error}"
-        )
+        raise RuntimeError(f"PyMuPDF（fitz）が利用できません。 import error: {fitz_res.error}")
     fitz = fitz_res.fitz
 
+    # ------------------------------------------------------------
+    # PDF判定
+    # ------------------------------------------------------------
     detected_kind, detected_pages = detect_pdf_kind_from_bytes(
         fitz=fitz,
         pdf_bytes=pdf_bytes,
@@ -713,20 +452,13 @@ def run_report_ocr_pipeline(
 
     if pdfkind not in ("text", "image"):
         raise RuntimeError(f"pdf_kind 判定結果が不正です。 pdf_kind={pdfkind}")
+
     if page_count_total <= 0:
         raise RuntimeError(f"page_count が不正です。 page_count={page_count_total}")
-    if pdfkind != "image":
-        raise RuntimeError("このOCR処理はimage PDFだけを対象とします。")
-    if not _is_locked(project):
-        raise RuntimeError("画像PDFですがロック未済のため OCR 実行できません。")
 
-    range_start, range_end = _normalize_page_range(
-        page_count_total=page_count_total,
-        start_page=start_page,
-        end_page=end_page,
-    )
-    pages_in_this_run = range_end - range_start + 1
-
+    # ------------------------------------------------------------
+    # processing_status.json に PDF基本情報を記録
+    # ------------------------------------------------------------
     upsert_pdf_info_status(
         projects_root,
         project_year=y,
@@ -738,129 +470,122 @@ def run_report_ocr_pipeline(
         done_by=str(done_by),
     )
 
+    # ------------------------------------------------------------
+    # paths
+    # ------------------------------------------------------------
     raw_txt_path = _get_report_raw_txt_path(text_dir=text_dir)
     clean_txt_path = _get_report_clean_txt_path(text_dir=text_dir)
-    raw_pages_json_path = text_dir / REPORT_RAW_PAGES_JSON_NAME
-    clean_pages_json_path = text_dir / REPORT_CLEAN_PAGES_JSON_NAME
-    progress_path = text_dir / OCR_PROGRESS_JSON_NAME
+    clean_pages_json_path = text_dir / "report_clean_pages.json"
     meta_path = _get_extract_meta_path(text_dir=text_dir)
-    ocr_pdf_path = _get_report_ocr_pdf_path(
-        ocr_dir=ocr_dir,
-        original_pdf_filename=str(pdf_path.name),
-    )
 
     started_at = dt.datetime.now().replace(microsecond=0).isoformat()
+
+    # ------------------------------------------------------------
+    # 初期値
+    # ------------------------------------------------------------
+    raw_text = ""
+    raw_page_texts: list[str] = []
     ai_results: list[Any] = []
+    used_ocr = False
     ocr_pdf_filename = ""
 
     try:
         # --------------------------------------------------------
-        # 初回だけ空のページ配列から開始する
-        # 再実行時は既存ページを維持して指定範囲だけ更新する
+        # 派生物を厳格全消し
+        # - PDFそのものは消さない
         # --------------------------------------------------------
-        if bool(merge_existing):
-            raw_page_texts = _read_pages_text_list(
-                path=raw_pages_json_path,
-                page_count_total=page_count_total,
-            )
-            completed_pages = _read_completed_pages(
-                progress_path=progress_path,
-                source_pdf_sha256=str(pdf_sha256),
-                page_count_total=page_count_total,
-            )
-        else:
-            _clear_dir_contents_strict(dir_path=ocr_dir, name="ocr_dir")
-            _clear_dir_contents_strict(dir_path=text_dir, name="text_dir")
-            raw_page_texts = ["" for _ in range(page_count_total)]
-            completed_pages = set()
+        _clear_dir_contents_strict(dir_path=ocr_dir, name="ocr_dir")
+        _clear_dir_contents_strict(dir_path=text_dir, name="text_dir")
 
-            upsert_pdf_info_status(
+        # --------------------------------------------------------
+        # PDF基本情報は text_dir 全消し後に再記録
+        # --------------------------------------------------------
+        upsert_pdf_info_status(
+            projects_root,
+            project_year=y,
+            project_no=pno3,
+            source_pdf_filename=str(pdf_path.name),
+            source_pdf_sha256=str(pdf_sha256),
+            pdf_kind=str(pdfkind),
+            page_count=int(page_count_total),
+            done_by=str(done_by),
+        )
+
+        # --------------------------------------------------------
+        # text PDF：直接抽出
+        # --------------------------------------------------------
+        if pdfkind == "text":
+            raw_text = extract_text_direct(
+                fitz=fitz,
+                pdf_bytes=pdf_bytes,
+                page_start_0=0,
+                page_end_0_inclusive=max(0, page_count_total - 1),
+            )
+            raw_page_texts = []
+            used_ocr = False
+            ocr_pdf_filename = ""
+
+        # --------------------------------------------------------
+        # image PDF：ロック済みのみ OCR 実行
+        # --------------------------------------------------------
+        elif pdfkind == "image":
+            if not _is_locked(project):
+                raise RuntimeError("画像PDFですがロック未済のため OCR 実行できません。")
+
+            if method_key == "gpt_vision":
+                raw_page_texts, ai_results = run_gpt_ocr_by_page(
+                    fitz=fitz,
+                    pdf_bytes=pdf_bytes,
+                    page_count_total=int(page_count_total),
+                    gpt_model=str(gpt_model or "gpt-4.1-mini"),
+                    gpt_max_output_tokens=gpt_max_output_tokens,
+                    render_dpi=300,
+                    progress_callback=progress_callback,
+                )
+
+                raw_text = _join_pages_text(raw_page_texts)
+                used_ocr = True
+                ocr_pdf_filename = ""
+
+            elif method_key == "pymupdf_tesseract":
+                raw_page_texts, ocr_pdf_bytes = _run_tesseract_ocr_by_page(
+                    fitz=fitz,
+                    pdf_bytes=pdf_bytes,
+                    page_count_total=int(page_count_total),
+                    ocr_lang=str(ocr_lang or "jpn+eng"),
+                    ocr_dpi=300,
+                    progress_callback=progress_callback,
+                )
+
+                raw_text = _join_pages_text(raw_page_texts)
+
+                ocr_pdf_path = _get_report_ocr_pdf_path(
+                    ocr_dir=ocr_dir,
+                    original_pdf_filename=str(pdf_path.name),
+                )
+                _atomic_write_bytes(ocr_pdf_path, ocr_pdf_bytes)
+
+                used_ocr = True
+                ocr_pdf_filename = str(ocr_pdf_path.name)
+
+            else:
+                raise RuntimeError(f"OCR方式が不正です。 method={method_key}")
+
+            mark_ocr_done(
                 projects_root,
                 project_year=y,
                 project_no=pno3,
-                source_pdf_filename=str(pdf_path.name),
-                source_pdf_sha256=str(pdf_sha256),
-                pdf_kind=str(pdfkind),
-                page_count=int(page_count_total),
                 done_by=str(done_by),
             )
 
-        # --------------------------------------------------------
-        # 指定範囲だけOCR
-        # --------------------------------------------------------
-        if method_key == "gpt_vision":
-            range_pdf_bytes = _slice_pdf_bytes(
-                fitz=fitz,
-                pdf_bytes=pdf_bytes,
-                start_page=range_start,
-                end_page=range_end,
-            )
-
-            def _gpt_progress(relative_page_no: int, _relative_total: int) -> None:
-                absolute_page_no = range_start + int(relative_page_no) - 1
-                if progress_callback is not None:
-                    progress_callback(absolute_page_no, page_count_total)
-
-            range_page_texts, ai_results = run_gpt_ocr_by_page(
-                fitz=fitz,
-                pdf_bytes=range_pdf_bytes,
-                page_count_total=int(pages_in_this_run),
-                gpt_model=str(gpt_model or "gpt-4.1-mini"),
-                gpt_max_output_tokens=gpt_max_output_tokens,
-                render_dpi=300,
-                progress_callback=_gpt_progress,
-            )
-            ocr_pdf_filename = ""
-
         else:
-            range_page_texts, range_ocr_pdf_bytes = _run_tesseract_ocr_by_page(
-                fitz=fitz,
-                pdf_bytes=pdf_bytes,
-                page_count_total=int(page_count_total),
-                start_page=int(range_start),
-                end_page=int(range_end),
-                ocr_lang=str(ocr_lang or "jpn+eng"),
-                ocr_dpi=300,
-                progress_callback=progress_callback,
-            )
-
-            merged_ocr_pdf_bytes = _merge_tesseract_ocr_pdf_range(
-                fitz=fitz,
-                original_pdf_bytes=pdf_bytes,
-                existing_ocr_pdf_path=ocr_pdf_path,
-                range_ocr_pdf_bytes=range_ocr_pdf_bytes,
-                start_page=range_start,
-                end_page=range_end,
-                page_count_total=page_count_total,
-            )
-            _atomic_write_bytes(ocr_pdf_path, merged_ocr_pdf_bytes)
-            ocr_pdf_filename = str(ocr_pdf_path.name)
-
-        if len(range_page_texts) != int(pages_in_this_run):
-            raise RuntimeError(
-                "OCR結果ページ数が処理範囲と一致しません。 "
-                f"expected={pages_in_this_run} actual={len(range_page_texts)}"
-            )
-
-        for offset, page_text in enumerate(range_page_texts):
-            page_no = range_start + offset
-            raw_page_texts[page_no - 1] = str(page_text or "")
-            completed_pages.add(page_no)
+            raise RuntimeError(f"pdf_kind が不正です。 pdf_kind={pdfkind}")
 
         # --------------------------------------------------------
-        # raw pages JSON と全文TXTを保存
+        # raw text 保存
         # --------------------------------------------------------
-        _write_pages_json(
-            path=raw_pages_json_path,
-            project_year=int(y),
-            project_no=str(pno3),
-            pdf_filename=str(pdf_path.name),
-            source_pdf_sha256=str(pdf_sha256),
-            pages_text_list=raw_page_texts,
-        )
-
-        raw_text = _join_pages_text(raw_page_texts)
         _atomic_write_text(raw_txt_path, str(raw_text or ""))
+
         mark_text_extracted(
             projects_root,
             project_year=y,
@@ -869,67 +594,37 @@ def run_report_ocr_pipeline(
         )
 
         # --------------------------------------------------------
-        # clean pages JSON と全文TXTを全ページ配列から再生成
+        # clean text 保存（任意）
         # --------------------------------------------------------
         clean_applied = False
         cleaned_at: str | None = None
 
         if bool(do_clean_text):
             clean_options = _build_default_clean_options()
-            clean_page_texts: list[str] = []
 
-            for page_no, raw_page_text in enumerate(raw_page_texts, start=1):
-                if page_no not in completed_pages:
-                    clean_page_texts.append("")
-                    continue
+            if pdfkind == "image":
+                clean_page_texts: list[str] = []
 
-                clean_page_text, _clean_report = clean_ocr_text(
-                    str(raw_page_text or ""),
-                    clean_options,
+                for raw_page_text in raw_page_texts:
+                    clean_page_text, _clean_report = clean_ocr_text(
+                        str(raw_page_text or ""),
+                        clean_options,
+                    )
+                    clean_page_texts.append(str(clean_page_text or ""))
+
+                clean_text = _join_pages_text(clean_page_texts)
+                _atomic_write_text(clean_txt_path, str(clean_text or ""))
+
+                create_clean_pages_json(
+                    clean_pages_json_path,
+                    collection_id="project",
+                    shard_id=str(int(y)),
+                    doc_id=f"{int(y):04d}-{str(pno3)}",
+                    pdf_filename=str(pdf_path.name),
+                    source_pdf_sha256=str(pdf_sha256),
+                    pages_text_list=clean_page_texts,
                 )
-                clean_page_texts.append(str(clean_page_text or ""))
 
-            clean_text = _join_pages_text(clean_page_texts)
-            _atomic_write_text(clean_txt_path, str(clean_text or ""))
-
-            _write_pages_json(
-                path=clean_pages_json_path,
-                project_year=int(y),
-                project_no=str(pno3),
-                pdf_filename=str(pdf_path.name),
-                source_pdf_sha256=str(pdf_sha256),
-                pages_text_list=clean_page_texts,
-            )
-
-            clean_applied = True
-            cleaned_at = dt.datetime.now().replace(microsecond=0).isoformat()
-
-        # --------------------------------------------------------
-        # 進捗保存
-        # --------------------------------------------------------
-        _write_ocr_progress(
-            progress_path=progress_path,
-            source_pdf_filename=str(pdf_path.name),
-            source_pdf_sha256=str(pdf_sha256),
-            page_count_total=page_count_total,
-            completed_pages=completed_pages,
-            last_start_page=range_start,
-            last_end_page=range_end,
-            done_by=str(done_by),
-        )
-
-        all_pages_completed = len(completed_pages) == int(page_count_total)
-
-        # 全ページ完了時だけ「OCR済み」「clean済み」にする
-        if all_pages_completed:
-            mark_ocr_done(
-                projects_root,
-                project_year=y,
-                project_no=pno3,
-                done_by=str(done_by),
-            )
-
-            if bool(clean_applied):
                 mark_cleaned(
                     projects_root,
                     project_year=y,
@@ -937,8 +632,14 @@ def run_report_ocr_pipeline(
                     done_by=str(done_by),
                 )
 
+                clean_applied = True
+                cleaned_at = dt.datetime.now().replace(microsecond=0).isoformat()
+
         finished_at = dt.datetime.now().replace(microsecond=0).isoformat()
 
+        # --------------------------------------------------------
+        # meta 保存
+        # --------------------------------------------------------
         meta_obj = _build_extract_meta_obj(
             source_pdf_filename=str(pdf_path.name),
             source_pdf_sha256=str(pdf_sha256),
@@ -947,25 +648,18 @@ def run_report_ocr_pipeline(
             ocr_pdf_filename=str(ocr_pdf_filename),
             pdf_kind=str(pdfkind),
             page_count_total=int(page_count_total),
-            pages_processed=len(completed_pages),
-            used_ocr=True,
+            pages_processed=int(page_count_total),
+            used_ocr=bool(used_ocr),
             ocr_lang=str(ocr_lang or ""),
             ocr_method=str(method_key),
             gpt_model=str(gpt_model or "") if method_key == "gpt_vision" else "",
             started_at=str(started_at),
             finished_at=str(finished_at),
-            status="ok" if all_pages_completed else "partial",
+            status="ok",
             error_message=None,
             clean_applied=bool(clean_applied),
             cleaned_at=cleaned_at,
         )
-        meta_obj["ocr_range"] = {
-            "start_page": int(range_start),
-            "end_page": int(range_end),
-            "pages_in_this_run": int(pages_in_this_run),
-            "completed_page_count": len(completed_pages),
-            "all_pages_completed": bool(all_pages_completed),
-        }
         _atomic_write_json(meta_path, meta_obj)
 
         rec = read_processing_status(
@@ -974,35 +668,17 @@ def run_report_ocr_pipeline(
             project_no=pno3,
         )
 
-        next_page = next(
-            (
-                page_no
-                for page_no in range(1, page_count_total + 1)
-                if page_no not in completed_pages
-            ),
-            None,
-        )
-
         return {
             "status": "ok",
             "project_year": int(y),
             "project_no": str(pno3),
             "pdf_kind": str(pdfkind),
             "page_count": int(page_count_total),
-            "processed_start_page": int(range_start),
-            "processed_end_page": int(range_end),
-            "processed_page_count": int(pages_in_this_run),
-            "completed_page_count": len(completed_pages),
-            "next_page": next_page,
-            "all_pages_completed": bool(all_pages_completed),
-            "used_ocr": True,
+            "used_ocr": bool(used_ocr),
             "ocr_method": str(method_key),
             "gpt_model": str(gpt_model or "") if method_key == "gpt_vision" else "",
             "raw_text_path": str(raw_txt_path),
-            "raw_pages_json_path": str(raw_pages_json_path),
             "clean_text_path": str(clean_txt_path) if clean_applied else None,
-            "clean_pages_json_path": str(clean_pages_json_path) if clean_applied else None,
-            "ocr_progress_path": str(progress_path),
             "extract_meta_path": str(meta_path),
             "ocr_pdf_filename": str(ocr_pdf_filename),
             "clean_applied": bool(clean_applied),
@@ -1021,8 +697,8 @@ def run_report_ocr_pipeline(
             ocr_pdf_filename=str(ocr_pdf_filename or ""),
             pdf_kind=str(pdfkind),
             page_count_total=int(page_count_total),
-            pages_processed=0,
-            used_ocr=True,
+            pages_processed=int(page_count_total),
+            used_ocr=bool(pdfkind == "image"),
             ocr_lang=str(ocr_lang or ""),
             ocr_method=str(method_key),
             gpt_model=str(gpt_model or "") if method_key == "gpt_vision" else "",
@@ -1033,10 +709,6 @@ def run_report_ocr_pipeline(
             clean_applied=False,
             cleaned_at=None,
         )
-        meta_obj["ocr_range"] = {
-            "start_page": int(range_start),
-            "end_page": int(range_end),
-        }
         _atomic_write_json(meta_path, meta_obj)
         raise
 

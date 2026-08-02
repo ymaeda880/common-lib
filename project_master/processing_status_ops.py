@@ -57,6 +57,16 @@ TEXT_CHECK_LEVEL_OK = "ok"
 TEXT_CHECK_LEVEL_WARNING = "warning"
 TEXT_CHECK_LEVEL_ERROR = "error"
 
+# ------------------------------------------------------------
+# 図面等を含む報告書の自動取込許可
+#
+# テキスト品質が正常である場合に限り，
+# 図面等ページがあってもRAG取込可とする設定を保持する．
+# ------------------------------------------------------------
+TEXT_CHECK_ALLOW_SPECIAL_PAGES_KEY = (
+    "text_check_allow_special_pages"
+)
+
 PDF_KIND_TEXT = "text"
 PDF_KIND_IMAGE = "image"
 
@@ -795,6 +805,7 @@ def mark_text_check_done(
     problem_pages: list[int] | tuple[int, ...] = (),
     result_file: str | None = None,
     check_error_message: str | None = None,
+    allow_special_pages: bool = False,
 ) -> Path:
     # ------------------------------------------------------------
     # テキスト品質チェック結果を記録する
@@ -889,6 +900,9 @@ def mark_text_check_done(
                 source_file
             ),
             "text_check_level": normalized_level,
+            TEXT_CHECK_ALLOW_SPECIAL_PAGES_KEY: bool(
+                allow_special_pages
+            ),
         }
     )
 

@@ -48,6 +48,8 @@ from common_lib.project_master.projects_repo import (
     get_project,
     insert_project,
     update_project,
+    count_projects_by_year,
+    delete_projects_by_year,
 )
 
 from common_lib.project_master.report_pdf_ops import (
@@ -139,6 +141,7 @@ from common_lib.project_master.report_check_ops import (
 from .report_display_status_ops import (
     TEXT_CHECK_DISPLAY_UNCHECKED,
     TEXT_CHECK_DISPLAY_OK,
+    TEXT_CHECK_DISPLAY_SPECIAL_OK,
     TEXT_CHECK_DISPLAY_NEEDS_REVIEW,
     TEXT_CHECK_DISPLAY_MANUAL_OK,
     TEXT_CHECK_DISPLAY_MANUAL_SKIP,

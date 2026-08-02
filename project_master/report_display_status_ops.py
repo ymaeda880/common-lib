@@ -47,6 +47,7 @@ from typing import Any
 # project_master imports
 # ============================================================
 from common_lib.project_master.processing_status_ops import (
+    TEXT_CHECK_ALLOW_SPECIAL_PAGES_KEY,
     TEXT_CHECK_LEVEL_ERROR,
     TEXT_CHECK_LEVEL_OK,
     TEXT_CHECK_LEVEL_WARNING,
@@ -69,6 +70,7 @@ from common_lib.project_master.report_text_ops import (
 # ============================================================
 TEXT_CHECK_DISPLAY_UNCHECKED = "unchecked"
 TEXT_CHECK_DISPLAY_OK = "ok"
+TEXT_CHECK_DISPLAY_SPECIAL_OK = "special_ok"
 TEXT_CHECK_DISPLAY_NEEDS_REVIEW = "needs_review"
 TEXT_CHECK_DISPLAY_MANUAL_OK = "manual_ok"
 TEXT_CHECK_DISPLAY_MANUAL_SKIP = "manual_skip"
@@ -132,6 +134,7 @@ class ReportTextCheckDisplayStatus:
     text_check_done: bool
     text_check_level: str
     problem_page_count: int
+    allow_special_pages: bool
 
     # ------------------------------------------------------------
     # 図面等
@@ -447,6 +450,7 @@ def _build_text_check_final_status(
     text_check_level: str,
     problem_page_count: int,
     special_page_count: int,
+    allow_special_pages: bool,
     manual_ok_valid: bool,
     manual_skip: bool,
 ) -> tuple[
@@ -462,8 +466,10 @@ def _build_text_check_final_status(
     # 1. 手動スキップ
     # 2. 未チェック
     # 3. 手動確認済み
-    # 4. 要確認
-    # 5. 正常
+    # 4. 文字品質の要確認
+    # 5. 図面等あり・自動取込許可
+    # 6. 図面等あり・自動取込不許可
+    # 7. 正常
     # ------------------------------------------------------------
     if manual_skip:
         return (
@@ -489,16 +495,31 @@ def _build_text_check_final_status(
             False,
         )
 
-    has_problem = bool(
+    text_has_problem = bool(
         text_check_level in {
             TEXT_CHECK_LEVEL_WARNING,
             TEXT_CHECK_LEVEL_ERROR,
         }
         or problem_page_count > 0
-        or special_page_count > 0
     )
 
-    if has_problem:
+    if text_has_problem:
+        return (
+            TEXT_CHECK_DISPLAY_NEEDS_REVIEW,
+            "❌",
+            "要確認",
+            True,
+        )
+
+    if special_page_count > 0 and allow_special_pages:
+        return (
+            TEXT_CHECK_DISPLAY_SPECIAL_OK,
+            "🟢",
+            "図面等あり（取込OK）",
+            False,
+        )
+
+    if special_page_count > 0:
         return (
             TEXT_CHECK_DISPLAY_NEEDS_REVIEW,
             "❌",
@@ -721,6 +742,15 @@ def build_report_text_check_display_status(
         )
     )
 
+
+    allow_special_pages = _normalize_bool(
+        status.get(
+            TEXT_CHECK_ALLOW_SPECIAL_PAGES_KEY,
+            False,
+        )
+    )
+
+
     special_page_count = (
         _normalize_non_negative_int(
             special_page_count
@@ -770,6 +800,7 @@ def build_report_text_check_display_status(
         text_check_level=text_check_level,
         problem_page_count=problem_page_count,
         special_page_count=special_page_count,
+        allow_special_pages=allow_special_pages,
         manual_ok_valid=manual_ok_valid,
         manual_skip=manual_skip,
     )
@@ -788,8 +819,12 @@ def build_report_text_check_display_status(
         source_sha256=source_sha256,
         text_check_done=text_check_done,
         text_check_level=text_check_level,
+   
         problem_page_count=(
             problem_page_count
+        ),
+        allow_special_pages=(
+            allow_special_pages
         ),
         special_page_count=(
             special_page_count
