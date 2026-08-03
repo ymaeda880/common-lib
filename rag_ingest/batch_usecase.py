@@ -27,7 +27,7 @@ from __future__ import annotations
 # imports
 # =============================================================================
 from pathlib import Path
-from typing import Iterable, Literal, Optional, Sequence
+from typing import Callable, Iterable, Literal, Optional, Sequence
 
 from .chunk_ops import ChunkOptions
 from .ingest_usecase import ingest_one_document
@@ -40,6 +40,45 @@ from .rebuild_usecase import rebuild_one_document
 # =============================================================================
 BatchMode = Literal["append_unprocessed", "rebuild_selected"]
 
+
+# =============================================================================
+# progress callback
+# =============================================================================
+ProgressCallback = Callable[..., None]
+
+
+def _notify_progress(
+    progress_callback: Optional[ProgressCallback],
+    *,
+    event: str,
+    current: int,
+    total: int,
+    source: IngestSource,
+    result: Optional[IngestResult] = None,
+) -> None:
+    # -----------------------------------------------------------------------------
+    # page側へ進捗を通知する。
+    #
+    # event：
+    # - start    ：1件の処理開始
+    # - complete ：1件の処理完了
+    #
+    # progress表示側で例外が発生しても，
+    # RAG取込処理そのものは停止させない。
+    # -----------------------------------------------------------------------------
+    if progress_callback is None:
+        return
+
+    try:
+        progress_callback(
+            event=str(event),
+            current=int(current),
+            total=int(total),
+            source=source,
+            result=result,
+        )
+    except Exception:
+        pass
 
 # =============================================================================
 # helper
@@ -174,6 +213,7 @@ def run_batch_ingest(
     mode: str,
     chunk_options: Optional[ChunkOptions] = None,
     dedupe_by_doc_id: bool = True,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> BatchIngestResult:
     # -----------------------------------------------------------------------------
     # 複数 source をまとめて処理する
@@ -186,12 +226,16 @@ def run_batch_ingest(
     # - dedupe_by_doc_id:
     #     True の場合、同一 doc_id の重複 source は先勝ちで除去する
     #
+    # - progress_callback:
+    #     1件ごとの開始・完了をpage側へ通知する
+    #
     # 戻り値：
     # - BatchIngestResult
     #
     # 方針：
     # - 1件失敗しても残りを継続
     # - 個別結果は全部 result に入れる
+    # - progress表示側の例外では処理を停止しない
     # -----------------------------------------------------------------------------
     batch_mode = normalize_batch_mode(mode)
 
@@ -200,8 +244,24 @@ def run_batch_ingest(
         src_list = _dedupe_sources_by_doc_id(src_list)
 
     result = BatchIngestResult()
+    total = len(src_list)
 
-    for src in src_list:
+    for current, src in enumerate(
+        src_list,
+        start=1,
+    ):
+        # -------------------------------------------------------------------------
+        # 1件処理開始
+        # -------------------------------------------------------------------------
+        _notify_progress(
+            progress_callback,
+            event="start",
+            current=current,
+            total=total,
+            source=src,
+            result=None,
+        )
+
         try:
             one = run_one_by_mode(
                 projects_root=projects_root,
@@ -213,6 +273,7 @@ def run_batch_ingest(
                 mode=batch_mode,
                 chunk_options=chunk_options,
             )
+
         except Exception as e:
             one = _build_error_result_from_source(
                 source=src,
@@ -220,6 +281,18 @@ def run_batch_ingest(
             )
 
         result.add(one)
+
+        # -------------------------------------------------------------------------
+        # 1件処理完了
+        # -------------------------------------------------------------------------
+        _notify_progress(
+            progress_callback,
+            event="complete",
+            current=current,
+            total=total,
+            source=src,
+            result=one,
+        )
 
     return result
 
@@ -237,6 +310,7 @@ def run_batch_append_unprocessed(
     sources: Sequence[IngestSource],
     chunk_options: Optional[ChunkOptions] = None,
     dedupe_by_doc_id: bool = True,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> BatchIngestResult:
     # -----------------------------------------------------------------------------
     # 未処理だけ追加
@@ -251,8 +325,8 @@ def run_batch_append_unprocessed(
         mode="append_unprocessed",
         chunk_options=chunk_options,
         dedupe_by_doc_id=dedupe_by_doc_id,
+        progress_callback=progress_callback,
     )
-
 
 def run_batch_rebuild_selected(
     *,
@@ -264,6 +338,7 @@ def run_batch_rebuild_selected(
     sources: Sequence[IngestSource],
     chunk_options: Optional[ChunkOptions] = None,
     dedupe_by_doc_id: bool = True,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> BatchIngestResult:
     # -----------------------------------------------------------------------------
     # 選択文書を再投入
@@ -278,4 +353,5 @@ def run_batch_rebuild_selected(
         mode="rebuild_selected",
         chunk_options=chunk_options,
         dedupe_by_doc_id=dedupe_by_doc_id,
+        progress_callback=progress_callback,
     )
