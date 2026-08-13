@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from ..types import TranscribeResult
+from ..types import TranscribeResult, UsageSummary
 #from ..costs.estimate import estimate_transcribe_cost
 from ..costs.estimate import estimate_transcribe_cost, estimate_chat_cost_from_usage
 
@@ -47,26 +47,98 @@ def openai_transcribe_audio(
         extra=extra,
     )
 
-    # language は whisper-1 のみ
-    if model == "whisper-1" and language:
-        kwargs["language"] = language
+    # ============================================================
+    # モデル別パラメータ制御
+    # ============================================================
 
-    # whisper-1 のみ許可される引数
+    # ------------------------------------------------------------
+    # whisper-1
+    # - language / prompt / response_format を使用可能
+    # ------------------------------------------------------------
     if model == "whisper-1":
+        if language:
+            kwargs["language"] = language
+
         if prompt:
             kwargs["prompt"] = prompt
+
         kwargs["response_format"] = response_format
+
+    # ------------------------------------------------------------
+    # gpt-4o-transcribe-diarize
+    # - タイムスタンプ・話者分離は diarized_json で取得する
+    # - prompt は渡さない
+    # ------------------------------------------------------------
+    elif model == "gpt-4o-transcribe-diarize":
+        kwargs["response_format"] = "diarized_json"
 
     res = transcribe_http(**kwargs)
 
     # ============================================================
-    # cost（正本）
-    # - audio_seconds がある時だけ
-    # - 為替は estimate_transcribe_cost 側（fx 正本）で解決する
-    # - 単価未設定などで計算不能なら None のまま
+    # usage / cost（正本）
     # ============================================================
+    usage = res.usage
     cost = None
-    if audio_seconds is not None:
+
+    # ------------------------------------------------------------
+    # gpt-4o-transcribe-diarize
+    # - APIレスポンスのusage tokenを使用する
+    # - 音声時間からは推計しない
+    # ------------------------------------------------------------
+    if model == "gpt-4o-transcribe-diarize":
+        raw_usage = None
+
+        if isinstance(res.raw, dict):
+            raw_usage = res.raw.get(
+                "usage",
+                None,
+            )
+
+        if isinstance(raw_usage, dict):
+            input_tokens = raw_usage.get(
+                "input_tokens",
+                None,
+            )
+
+            output_tokens = raw_usage.get(
+                "output_tokens",
+                None,
+            )
+
+            total_tokens = raw_usage.get(
+                "total_tokens",
+                None,
+            )
+
+            usage = UsageSummary(
+                input_tokens=(
+                    int(input_tokens)
+                    if isinstance(input_tokens, int)
+                    else None
+                ),
+                output_tokens=(
+                    int(output_tokens)
+                    if isinstance(output_tokens, int)
+                    else None
+                ),
+                total_tokens=(
+                    int(total_tokens)
+                    if isinstance(total_tokens, int)
+                    else None
+                ),
+                raw=raw_usage,
+            )
+
+        cost = estimate_chat_cost_from_usage(
+            model=model,
+            usage=usage,
+        )
+
+    # ------------------------------------------------------------
+    # whisper-1 / gpt-4o-mini-transcribe / gpt-4o-transcribe
+    # - 従来どおり音声分単価を使用する
+    # ------------------------------------------------------------
+    elif audio_seconds is not None:
         cost = estimate_transcribe_cost(
             model=model,
             audio_seconds=float(audio_seconds),
@@ -79,7 +151,7 @@ def openai_transcribe_audio(
         audio_seconds=audio_seconds,
         request_id=res.request_id,
         meta=res.meta,
-        usage=res.usage,
+        usage=usage,
         cost=cost,
         raw=res.raw,
     )
@@ -94,6 +166,7 @@ def gemini_transcribe_audio(
     audio_bytes: bytes,
     mime_type: str,
     filename: str,
+    response_format: str,
     language: Optional[str],
     prompt: Optional[str],
     timeout_sec: int,
@@ -107,6 +180,7 @@ def gemini_transcribe_audio(
         audio_bytes=audio_bytes,
         mime_type=mime_type,
         filename=filename,
+        response_format=response_format,
         language=language,
         prompt=prompt,
         timeout_sec=timeout_sec,

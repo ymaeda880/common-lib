@@ -25,8 +25,6 @@ TEXT_MODEL_CATALOG = [
 
 DEFAULT_TEXT_MODEL_KEY = "openai:gpt-5-mini"
 
-DEFAULT_TEXT_MODEL_KEY = "openai:gpt-5-mini"
-
 # ============================================================
 # Image 系モデル
 # ============================================================
@@ -44,6 +42,7 @@ TRANSCRIBE_MODELS = [
     "whisper-1",
     "gpt-4o-mini-transcribe",
     "gpt-4o-transcribe",
+    "gpt-4o-transcribe-diarize",
     "gemini-3.5-flash",
 ]
 

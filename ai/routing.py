@@ -225,6 +225,7 @@ def transcribe_audio(
             mime_type=mime_type,
             filename=filename,      # ★ 追加２
             audio_seconds=audio_seconds,  # ★追加
+            response_format=response_format,  # ★ 追加
             language=language,
             prompt=prompt,
             timeout_sec=timeout_sec,

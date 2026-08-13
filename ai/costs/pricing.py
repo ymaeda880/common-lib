@@ -39,6 +39,13 @@ CHAT_PRICES_USD_PER_1M: Dict[str, ChatPricePer1M] = {
        
     "gpt-4o": ChatPricePer1M(in_usd=2.50, out_usd=10.00),
     "gpt-4o-mini": ChatPricePer1M(in_usd=0.15, out_usd=0.60),
+
+    # OpenAI Transcribe diarize（USD / 1M tokens）
+    "gpt-4o-transcribe-diarize": ChatPricePer1M(
+        in_usd=2.50,
+        out_usd=10.00,
+    ),
+
     # 参考（必要なら）
     "gpt-4.1": ChatPricePer1M(in_usd=2.00, out_usd=8.00),
     "gpt-4.1-mini": ChatPricePer1M(in_usd=0.40, out_usd=1.60),
