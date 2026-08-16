@@ -159,34 +159,12 @@ def render_info_card(
     title_margin_bottom: str = "10px",
     body_margin_top: str = "0px",
     body_margin_bottom: str = "0px",
-    color: str | None = None,
 ) -> None:
     """
-    情報カードを1枚描画する．
-
-    color:
-    - None
-    - green
-    - red
-    - blue
-    - orange
-    - yellow
-    - gray
+    情報カードを1枚描画する
     """
-
-    # -------------------------------------------------------------------------
-    # パネル色class
-    # -------------------------------------------------------------------------
-    panel_class = "ts-card"
-
-    if color:
-        panel_class += f" panel-{color}"
-
-    # -------------------------------------------------------------------------
-    # HTML
-    # -------------------------------------------------------------------------
     html = (
-        f'<div class="{panel_class}" '
+        f'<div class="ts-card" '
         f'style="padding:{card_padding};">'
         f'<div class="ts-card-title" '
         f'style="font-size:{title_font_size};'
@@ -204,10 +182,7 @@ def render_info_card(
         '</div>'
     )
 
-    st.markdown(
-        html,
-        unsafe_allow_html=True,
-    )
+    st.markdown(html, unsafe_allow_html=True)
 
 
 # =============================================================================
@@ -298,19 +273,9 @@ def render_info_card_compact(
     *,
     title: str = "",
     body_html: str,
-    color: str | None = None,
 ) -> None:
     """
-    コンパクト版の情報カードを1枚描画する．
-
-    color:
-    - None
-    - green
-    - red
-    - blue
-    - orange
-    - yellow
-    - gray
+    コンパクト版の情報カードを1枚描画する
     """
 
     render_info_card(
@@ -323,7 +288,6 @@ def render_info_card_compact(
         title_margin_bottom=COMPACT_INFO_TITLE_MARGIN_BOTTOM,
         body_margin_top=COMPACT_INFO_BODY_MARGIN_TOP,
         body_margin_bottom=COMPACT_INFO_BODY_MARGIN_BOTTOM,
-        color=color,
     )
 
 
