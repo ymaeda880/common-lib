@@ -103,6 +103,33 @@ def get_admin_users() -> Set[str]:
     return {str(u).strip() for u in users if str(u).strip()}
 
 
+# ============================================================
+# 開発者ユーザー
+# ============================================================
+
+@lru_cache(maxsize=1)
+def get_developer_user() -> Optional[str]:
+    data = _load_settings()
+
+    try:
+        user = str(
+            data.get(
+                "developer_user",
+                {},
+            ).get(
+                "user",
+                "",
+            )
+            or ""
+        ).strip()
+    except Exception:
+        user = ""
+
+    if not user:
+        return None
+
+    return user
+
 @lru_cache(maxsize=128)
 def get_restricted_users(app_key: str) -> Set[str]:
     data = _load_settings()
@@ -233,6 +260,20 @@ def is_admin(user: Optional[str]) -> bool:
     return u in admins_lower
 
 
+def is_developer(user: Optional[str]) -> bool:
+    if not user:
+        return False
+
+    developer = get_developer_user()
+
+    if not developer:
+        return False
+
+    return (
+        user.strip().lower()
+        == developer.strip().lower()
+    )
+
 def is_restricted_allowed(user: Optional[str], app_key: str) -> bool:
     if not user:
         return False
@@ -327,6 +368,10 @@ def clear_auth_caches() -> None:
     except Exception:
         pass
     try:
-        get_restricted_users.cache_clear()  # type: ignore[attr-defined]
+        get_developer_user.cache_clear()  # type: ignore[attr-defined]
     except Exception:
         pass
+    try:
+        get_restricted_users.cache_clear()  # type: ignore[attr-defined]
+    except Exception:
+        pass   

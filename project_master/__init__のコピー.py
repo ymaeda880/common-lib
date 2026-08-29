@@ -3,12 +3,14 @@
 # Project Master（高レベルAPI）
 # - パス解決 / スキーマ初期化 / projects CRUD / 状態判定
 # - 報告書PDF本体操作
-# - 契約書PDF本体操作
 # - 報告書OCR / text / clean 操作
 # - 処理状態（text/processing_status.json）操作
 # ------------------------------------------------------------
 
 from common_lib.project_master.paths import (
+    # ------------------------------------------------------------
+    # paths（正本）
+    # ------------------------------------------------------------
     ProjectMasterPaths,
     get_archive_root,
     get_project_master_root,
@@ -26,14 +28,23 @@ from common_lib.project_master.paths import (
 )
 
 from common_lib.project_master.models import (
+    # ------------------------------------------------------------
+    # models
+    # ------------------------------------------------------------
     Project,
 )
 
 from common_lib.project_master.schema import (
+    # ------------------------------------------------------------
+    # schema（init）
+    # ------------------------------------------------------------
     init_project_master_db,
 )
 
 from common_lib.project_master.projects_repo import (
+    # ------------------------------------------------------------
+    # repository（CRUD）
+    # ------------------------------------------------------------
     get_project,
     insert_project,
     update_project,
@@ -42,6 +53,9 @@ from common_lib.project_master.projects_repo import (
 )
 
 from common_lib.project_master.report_pdf_ops import (
+    # ------------------------------------------------------------
+    # report pdf（正本API）
+    # ------------------------------------------------------------
     get_report_pdf_path,
     upsert_report_pdf,
     delete_report_pdf,
@@ -52,29 +66,10 @@ from common_lib.project_master.report_pdf_ops import (
     render_pdf_page_png_simple_from_bytes,
 )
 
-# ------------------------------------------------------------
-# contract pdf（正本API）
-# ------------------------------------------------------------
-from common_lib.project_master.contract_pdf_ops import (
-    build_contract_pdf_filename,
-    get_contract_pdf_path,
-    list_contract_pdfs,
-    upsert_contract_pdf,
-    delete_contract_pdf,
-)
-
-# ------------------------------------------------------------
-# contract status ops
-# ------------------------------------------------------------
-from common_lib.project_master.contract_status_ops import (
-    CONTRACT_STATUS_FILENAME,
-    get_contract_status_path,
-    read_contract_status,
-    write_contract_status,
-    delete_contract_status,
-)
-
 from common_lib.project_master.report_ocr_ops import (
+    # ------------------------------------------------------------
+    # report ocr / text / clean（正本API）
+    # ------------------------------------------------------------
     REPORT_RAW_TXT_NAME,
     REPORT_CLEAN_TXT_NAME,
     EXTRACT_META_JSON_NAME,
@@ -84,6 +79,9 @@ from common_lib.project_master.report_ocr_ops import (
 )
 
 from common_lib.project_master.state import (
+    # ------------------------------------------------------------
+    # state（UI）
+    # ------------------------------------------------------------
     StateResult,
     calc_state,
     STATE_S0_NOT_REGISTERED,
@@ -93,6 +91,9 @@ from common_lib.project_master.state import (
 )
 
 from common_lib.project_master.pdf_status_ops import (
+    # ------------------------------------------------------------
+    # pdf status ops（pdf/pdf_status.json）
+    # ------------------------------------------------------------
     PDF_STATUS_FILENAME,
     ReportPdfListItem,
     get_pdf_status_path,
@@ -120,6 +121,9 @@ from common_lib.project_master.processing_status_ops import (
 )
 
 from common_lib.project_master.report_check_ops import (
+    # ------------------------------------------------------------
+    # report check（103ページ用）
+    # ------------------------------------------------------------
     REPORT_RAW_TXT_NAME,
     ACTION_SKIPPED,
     ACTION_PROCESSED_TEXT_PDF,
@@ -131,6 +135,9 @@ from common_lib.project_master.report_check_ops import (
     check_report_pdfs_by_year,
 )
 
+# ------------------------------------------------------------
+# report display status ops
+# ------------------------------------------------------------
 from .report_display_status_ops import (
     TEXT_CHECK_DISPLAY_UNCHECKED,
     TEXT_CHECK_DISPLAY_OK,

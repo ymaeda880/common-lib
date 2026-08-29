@@ -9,11 +9,10 @@
 # project 固有で扱うもの：
 # - project_year / project_no
 # - pdf_filename
-# - pdf_kind（text / image）
+# - pdf_kind（text / image / mixed）
 # - pdf_lock_flag
 # - OCR済みか
-# - report_raw.txt / report_clean.txt
-# - report_raw_pages.json / report_clean_pages.json
+# - report_pages.json
 # - project 用 collection_id / shard_id / doc_id / attrs
 #
 # 設計方針：
@@ -23,24 +22,16 @@
 # - attrs に year / pno / ocr を入れる
 #
 # 入力元テキストの基本方針：
-# - image PDF の場合：
-#     report_clean.txt を使う
-# - text PDF の場合：
-#     clean があれば clean を使える設計
-#     少なくとも clean が無ければ raw を使う
-#
-# page JSON の基本方針：
-# - source_text_kind == "clean" の場合：
-#     report_clean_pages.json を使う
-# - source_text_kind == "raw" の場合：
-#     report_raw_pages.json を使う
+# - 正本は text/report_pages.json
+# - text / image / mixed の区別にかかわらず pages[].text を使用する
+# - image頁はOCR後に pages[].text が更新される
+# - RAG側では report_pages.json から全文とページ境界を構築する
 #
 # 注意：
 # - path は原則として Archive/project ルート相対で保持する
 #   例：
 #     2019/009/pdf/xxx.pdf
-#     2019/009/text/report_raw.txt
-#     2019/009/text/report_raw_pages.json
+#     2019/009/text/report_pages.json
 # - project_master.db の path はここでは扱わない
 # =============================================================================
 
@@ -65,11 +56,7 @@ from ..models import IngestSource
 # =============================================================================
 COLLECTION_ID = "project"
 
-REPORT_RAW_TXT_NAME = "report_raw.txt"
-REPORT_CLEAN_TXT_NAME = "report_clean.txt"
-
-REPORT_RAW_PAGES_JSON_NAME = "report_raw_pages.json"
-REPORT_CLEAN_PAGES_JSON_NAME = "report_clean_pages.json"
+REPORT_PAGES_JSON_NAME = "report_pages.json"
 
 
 # =============================================================================
@@ -198,35 +185,52 @@ def _relative_pdf_path(project_year: int, project_no: str, pdf_filename: str) ->
     return f"{rel}/pdf/{pdf_filename}"
 
 
-def _relative_text_path(project_year: int, project_no: str, txt_name: str) -> str:
+def _relative_report_pages_path(project_year: int, project_no: str) -> str:
     # -----------------------------------------------------------------------------
-    # Archive/project ルート相対の text path
+    # Archive/project ルート相対の report_pages.json path
     #
     # 例：
-    #   2019/009/text/report_raw.txt
+    #   2019/009/text/report_pages.json
     # -----------------------------------------------------------------------------
     rel = _report_root_relative_dir(project_year, project_no)
-    return f"{rel}/text/{txt_name}"
+    return f"{rel}/text/{REPORT_PAGES_JSON_NAME}"
 
 
-def _relative_pages_path(project_year: int, project_no: str, json_name: str) -> str:
+def _read_report_pages_input_text(path: Path) -> str:
     # -----------------------------------------------------------------------------
-    # Archive/project ルート相対の pages json path
+    # report_pages.json の pages[].text をPDFページ順に連結する。
     #
-    # 例：
-    #   2019/009/text/report_raw_pages.json
+    # 後続のRAG処理と同じくページ間には区切り文字を追加しない。
+    # 実際のchunk化・ページ境界計算は後続処理がsource_pages_pathから行う。
     # -----------------------------------------------------------------------------
-    rel = _report_root_relative_dir(project_year, project_no)
-    return f"{rel}/text/{json_name}"
+    import json
 
-def _read_text_file(path: Path) -> str:
-    # -----------------------------------------------------------------------------
-    # UTF-8 前提で txt を読む
-    # -----------------------------------------------------------------------------
     try:
-        return path.read_text(encoding="utf-8")
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception as e:
-        raise RuntimeError(f"テキスト読込失敗: {path} : {e}") from e
+        raise RuntimeError(f"report_pages.json 読込失敗: {path} : {e}") from e
+
+    pages = payload.get("pages", [])
+    if not isinstance(pages, list):
+        raise RuntimeError("report_pages.json の pages がlistではありません。")
+
+    page_rows = []
+    for row in pages:
+        if not isinstance(row, dict):
+            continue
+
+        try:
+            page_no = int(row.get("page_no", 0) or 0)
+        except Exception:
+            page_no = 0
+
+        if page_no <= 0:
+            continue
+
+        page_rows.append((page_no, str(row.get("text", "") or "")))
+
+    page_rows.sort(key=lambda x: x[0])
+    return "".join(text for _, text in page_rows)
 
 
 def _pdf_kind_label(rec) -> str:
@@ -234,7 +238,7 @@ def _pdf_kind_label(rec) -> str:
     # processing_status から pdf_kind を正規化する
     # -----------------------------------------------------------------------------
     v = str(getattr(rec, "pdf_kind", "") or "").strip().lower()
-    if v in ("text", "image"):
+    if v in ("text", "image", "mixed"):
         return v
     return ""
 
@@ -252,104 +256,6 @@ def _sha256_from_processing_status(rec) -> str:
     # -----------------------------------------------------------------------------
     v = str(getattr(rec, "source_pdf_sha256", "") or "").strip()
     return v
-
-
-def _choose_text_source_for_project(
-    *,
-    projects_root: Path,
-    project_year: int,
-    project_no: str,
-    pdf_kind: str,
-) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    # -----------------------------------------------------------------------------
-    # project の入力元テキストを決める
-    #
-    # 戻り値：
-    #   (source_text_kind, source_text_relpath, message)
-    #
-    # 正常時：
-    #   ("raw" or "clean", "2019/009/text/....txt", None)
-    #
-    # 異常時：
-    #   (None, None, "理由")
-    #
-    # ルール：
-    # - image PDF -> report_clean.txt 必須
-    # - text PDF  -> clean があれば clean を使える
-    #                なければ raw
-    # -----------------------------------------------------------------------------
-    text_dir = _text_dir(projects_root, project_year, project_no)
-
-    clean_path = text_dir / REPORT_CLEAN_TXT_NAME
-    raw_path = text_dir / REPORT_RAW_TXT_NAME
-
-    clean_exists = clean_path.exists()
-    raw_exists = raw_path.exists()
-
-    if pdf_kind == "image":
-        if clean_exists:
-            return (
-                "clean",
-                _relative_text_path(project_year, project_no, REPORT_CLEAN_TXT_NAME),
-                None,
-            )
-        return (None, None, "image PDF ですが report_clean.txt が存在しません。")
-
-    if pdf_kind == "text":
-        if clean_exists:
-            return (
-                "clean",
-                _relative_text_path(project_year, project_no, REPORT_CLEAN_TXT_NAME),
-                None,
-            )
-        if raw_exists:
-            return (
-                "raw",
-                _relative_text_path(project_year, project_no, REPORT_RAW_TXT_NAME),
-                None,
-            )
-        return (None, None, "text PDF ですが report_raw.txt / report_clean.txt が存在しません。")
-
-    return (None, None, "pdf_kind が未判定です。")
-
-
-def _choose_pages_source_for_project(
-    *,
-    projects_root: Path,
-    project_year: int,
-    project_no: str,
-    source_text_kind: str,
-) -> tuple[Optional[str], Optional[str]]:
-    # -----------------------------------------------------------------------------
-    # source_text_kind に対応する pages json を決める
-    #
-    # 戻り値：
-    #   (source_pages_relpath, message)
-    #
-    # 正常時：
-    #   ("2019/009/text/report_raw_pages.json", None)
-    #
-    # 異常時：
-    #   (None, "理由")
-    # -----------------------------------------------------------------------------
-    text_dir = _text_dir(projects_root, project_year, project_no)
-    kind = str(source_text_kind or "").strip().lower()
-
-    if kind == "clean":
-        rel = _relative_pages_path(project_year, project_no, REPORT_CLEAN_PAGES_JSON_NAME)
-        abs_path = text_dir / REPORT_CLEAN_PAGES_JSON_NAME
-        if abs_path.exists():
-            return (rel, None)
-        return (None, "source_text_kind=clean ですが report_clean_pages.json が存在しません。")
-
-    if kind == "raw":
-        rel = _relative_pages_path(project_year, project_no, REPORT_RAW_PAGES_JSON_NAME)
-        abs_path = text_dir / REPORT_RAW_PAGES_JSON_NAME
-        if abs_path.exists():
-            return (rel, None)
-        return (None, "source_text_kind=raw ですが report_raw_pages.json が存在しません。")
-
-    return (None, f"未対応の source_text_kind です: {source_text_kind}")
 
 
 # =============================================================================
@@ -456,12 +362,15 @@ def resolve_project_report_source(
         )
 
     # -------------------------------------------------------------------------
-    # 画像PDFはロック済み前提で運用
+    # RAG作成はロック済みPDFのみ対象
+    #
+    # 未ロックのPDFは変更される可能性があるため，
+    # PDF種別にかかわらずRAGのsource解決を行わない。
     # -------------------------------------------------------------------------
-    if pdf_kind == "image" and int(pdf_lock_flag or 0) != 1:
+    if int(pdf_lock_flag or 0) != 1:
         return ProjectSourceResolveResult(
             ok=False,
-            message="image PDF ですがロック未済のため source 解決を行いません。",
+            message="PDFがロック未済のため source 解決を行いません。",
             project_year=year,
             project_no=pno,
             pdf_filename=fn,
@@ -472,102 +381,69 @@ def resolve_project_report_source(
         )
 
     # -------------------------------------------------------------------------
-    # source text 解決
+    # report_pages.json 解決
     # -------------------------------------------------------------------------
-    source_text_kind, source_text_relpath, msg = _choose_text_source_for_project(
-        projects_root=Path(projects_root),
-        project_year=year,
-        project_no=pno,
-        pdf_kind=pdf_kind,
+    source_pages_relpath = _relative_report_pages_path(
+        year,
+        pno,
+    )
+    source_pages_abs = (
+        _archive_project_root(Path(projects_root))
+        / source_pages_relpath
     )
 
-    if not source_text_kind or not source_text_relpath:
-        return ProjectSourceResolveResult(
-            ok=False,
-            message=str(msg or "入力元テキストを解決できませんでした。"),
-            project_year=year,
-            project_no=pno,
-            pdf_filename=fn,
-            pdf_kind=pdf_kind,
-            pdf_lock_flag=int(pdf_lock_flag or 0),
-            ocr_done=ocr_done,
-            sha256=sha256 or None,
-        )
-
-    source_text_abs = _archive_project_root(Path(projects_root)) / source_text_relpath
-    if not source_text_abs.exists():
-        return ProjectSourceResolveResult(
-            ok=False,
-            message=f"入力元テキストが存在しません: {source_text_relpath}",
-            project_year=year,
-            project_no=pno,
-            pdf_filename=fn,
-            pdf_kind=pdf_kind,
-            pdf_lock_flag=int(pdf_lock_flag or 0),
-            ocr_done=ocr_done,
-            source_text_kind=source_text_kind,
-            source_text_path=source_text_relpath,
-            sha256=sha256 or None,
-        )
-
-    input_text = _read_text_file(source_text_abs)
-
-    if not str(input_text).strip():
-        return ProjectSourceResolveResult(
-            ok=False,
-            message=f"入力元テキストが空です: {source_text_relpath}",
-            project_year=year,
-            project_no=pno,
-            pdf_filename=fn,
-            pdf_kind=pdf_kind,
-            pdf_lock_flag=int(pdf_lock_flag or 0),
-            ocr_done=ocr_done,
-            source_text_kind=source_text_kind,
-            source_text_path=source_text_relpath,
-            sha256=sha256 or None,
-        )
-
-    # -------------------------------------------------------------------------
-    # source pages 解決
-    # -------------------------------------------------------------------------
-    source_pages_relpath, pages_msg = _choose_pages_source_for_project(
-        projects_root=Path(projects_root),
-        project_year=year,
-        project_no=pno,
-        source_text_kind=str(source_text_kind),
-    )
-
-    if not source_pages_relpath:
-        return ProjectSourceResolveResult(
-            ok=False,
-            message=str(pages_msg or "pages json を解決できませんでした。"),
-            project_year=year,
-            project_no=pno,
-            pdf_filename=fn,
-            pdf_kind=pdf_kind,
-            pdf_lock_flag=int(pdf_lock_flag or 0),
-            ocr_done=ocr_done,
-            source_text_kind=source_text_kind,
-            source_text_path=source_text_relpath,
-            sha256=sha256 or None,
-        )
-
-    source_pages_abs = _archive_project_root(Path(projects_root)) / source_pages_relpath
     if not source_pages_abs.exists():
         return ProjectSourceResolveResult(
             ok=False,
-            message=f"pages json が存在しません: {source_pages_relpath}",
+            message=f"report_pages.json が存在しません: {source_pages_relpath}",
             project_year=year,
             project_no=pno,
             pdf_filename=fn,
             pdf_kind=pdf_kind,
             pdf_lock_flag=int(pdf_lock_flag or 0),
             ocr_done=ocr_done,
-            source_text_kind=source_text_kind,
-            source_text_path=source_text_relpath,
+            source_text_kind="other",
+            source_text_path=source_pages_relpath,
             source_pages_path=source_pages_relpath,
             sha256=sha256 or None,
         )
+
+    try:
+        input_text = _read_report_pages_input_text(source_pages_abs)
+    except Exception as e:
+        return ProjectSourceResolveResult(
+            ok=False,
+            message=str(e),
+            project_year=year,
+            project_no=pno,
+            pdf_filename=fn,
+            pdf_kind=pdf_kind,
+            pdf_lock_flag=int(pdf_lock_flag or 0),
+            ocr_done=ocr_done,
+            source_text_kind="other",
+            source_text_path=source_pages_relpath,
+            source_pages_path=source_pages_relpath,
+            sha256=sha256 or None,
+        )
+
+    if not input_text.strip():
+        return ProjectSourceResolveResult(
+            ok=False,
+            message=f"report_pages.json のテキストが空です: {source_pages_relpath}",
+            project_year=year,
+            project_no=pno,
+            pdf_filename=fn,
+            pdf_kind=pdf_kind,
+            pdf_lock_flag=int(pdf_lock_flag or 0),
+            ocr_done=ocr_done,
+            source_text_kind="other",
+            source_text_path=source_pages_relpath,
+            source_pages_path=source_pages_relpath,
+            sha256=sha256 or None,
+        )
+
+    source_text_kind = "other"
+    source_text_relpath = source_pages_relpath
 
     source_pdf_relpath = _relative_pdf_path(year, pno, fn)
     source_pdf_abs = _archive_project_root(Path(projects_root)) / source_pdf_relpath

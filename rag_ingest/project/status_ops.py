@@ -113,7 +113,7 @@ def _pdf_kind_label(rec) -> str:
     # processing_status から pdf_kind を表示用に正規化
     # -----------------------------------------------------------------------------
     v = str(getattr(rec, "pdf_kind", "") or "").strip().lower()
-    if v in ("text", "image"):
+    if v in ("text", "image", "mixed"):
         return v
     return "未判定"
 
@@ -178,6 +178,7 @@ def build_project_rag_row_icons(
     # - pdf_kind
     #     text  -> 📄
     #     image -> 🖼️
+    #     mixed -> ◐
     #     else  -> ❓
     #
     # - lock
@@ -186,7 +187,7 @@ def build_project_rag_row_icons(
     #
     # - ocr
     #     text PDF は OCR不要なので ➖
-    #     image PDF は done / 未done を表示
+    #     image / mixed PDF は done / 未done を表示
     #
     # - rag
     #     done  -> 🧠
@@ -196,6 +197,8 @@ def build_project_rag_row_icons(
         pdf_icon = "📄"
     elif pdf_kind == "image":
         pdf_icon = "🖼️"
+    elif pdf_kind == "mixed":
+        pdf_icon = "◐"
     else:
         pdf_icon = "❓"
 

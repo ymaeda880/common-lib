@@ -60,10 +60,12 @@ from common_lib.project_master.processing_status_ops import (
 from common_lib.project_master.report_text_ops import (
     exists_text_raw,
     exists_text_clean,
-    get_text_raw_pages_json_path,
-    get_text_clean_pages_json_path,
 )
 
+from common_lib.project_master.report_pages_v2_ops import (
+    get_report_pages_path,
+    read_report_pages,
+)
 
 # ============================================================
 # constants（テキストチェック最終判定）
@@ -94,6 +96,10 @@ class ReportDisplayStatus:
     pdf_kind: str
     page_count: int | None
     page_count_display: str
+
+    text_page_count: int | None
+    image_page_count: int | None
+
     ocr_done: bool
 
     lock_flag: int
@@ -122,8 +128,7 @@ class ReportTextCheckDisplayStatus:
     # ------------------------------------------------------------
     # ページJSON状態
     # ------------------------------------------------------------
-    raw_pages_json_exists: bool
-    clean_pages_json_exists: bool
+    report_pages_json_exists: bool
 
     source_file: str
     source_sha256: str
@@ -253,77 +258,34 @@ def _sha256_of_file(
     except Exception:
         return ""
 
-
 def _select_text_check_source(
     projects_root: Path,
     *,
     project_year: int,
     project_no: str,
     role: str,
-) -> tuple[
-    bool,
-    bool,
-    str,
-    str,
-]:
+) -> tuple[bool, str, str]:
     # ------------------------------------------------------------
-    # テキストチェック対象となるページJSONを決定する
-    #
-    # 優先順位：
-    # 1. report_clean_pages.json
-    # 2. report_raw_pages.json
+    # テキストチェック対象は report_pages.json のみとする
     # ------------------------------------------------------------
-    raw_path = get_text_raw_pages_json_path(
+    report_pages_path = get_report_pages_path(
         projects_root,
         project_year=project_year,
         project_no=project_no,
-        role=role,
     )
 
-    clean_path = get_text_clean_pages_json_path(
-        projects_root,
-        project_year=project_year,
-        project_no=project_no,
-        role=role,
+    report_pages_json_exists = bool(
+        report_pages_path.exists()
+        and report_pages_path.is_file()
     )
 
-    raw_exists = bool(
-        raw_path
-        and raw_path.exists()
-        and raw_path.is_file()
-    )
-
-    clean_exists = bool(
-        clean_path
-        and clean_path.exists()
-        and clean_path.is_file()
-    )
-
-    if clean_exists:
-        return (
-            raw_exists,
-            clean_exists,
-            clean_path.name,
-            _sha256_of_file(
-                clean_path
-            ),
-        )
-
-    if raw_exists:
-        return (
-            raw_exists,
-            clean_exists,
-            raw_path.name,
-            _sha256_of_file(
-                raw_path
-            ),
-        )
+    if not report_pages_json_exists:
+        return False, "", ""
 
     return (
-        raw_exists,
-        clean_exists,
-        "",
-        "",
+        True,
+        report_pages_path.name,
+        _sha256_of_file(report_pages_path),
     )
 
 
@@ -348,6 +310,7 @@ def _pdf_kind_label_from_record(
     if value in {
         "text",
         "image",
+        "mixed",
     }:
         return value
 
@@ -399,6 +362,52 @@ def _page_count_display_from_record(
         return "未計算"
 
     return f"{page_count}p"
+
+def _page_kind_counts_from_report_pages(
+    projects_root: Path,
+    *,
+    project_year: int,
+    project_no: str,
+) -> tuple[int | None, int | None]:
+    # ------------------------------------------------------------
+    # report_pages.json から text / image ページ数を取得する
+    #
+    # 新方式の report_pages.json がない場合は，
+    # 既存処理へ影響させず None / None を返す
+    # ------------------------------------------------------------
+    try:
+        payload = read_report_pages(
+            projects_root,
+            project_year=project_year,
+            project_no=project_no,
+        )
+
+        text_page_count = int(
+            payload.get(
+                "text_page_count",
+                0,
+            )
+            or 0
+        )
+
+        image_page_count = int(
+            payload.get(
+                "image_page_count",
+                0,
+            )
+            or 0
+        )
+
+        return (
+            text_page_count,
+            image_page_count,
+        )
+
+    except Exception:
+        return (
+            None,
+            None,
+        )
 
 
 def _is_ocr_done_from_record(
@@ -597,6 +606,15 @@ def build_report_display_status(
         )
     )
 
+    (
+        text_page_count,
+        image_page_count,
+    ) = _page_kind_counts_from_report_pages(
+        projects_root,
+        project_year=project_year,
+        project_no=project_no,
+    )
+
     ocr_done = _is_ocr_done_from_record(
         rec
     )
@@ -629,6 +647,8 @@ def build_report_display_status(
         pdf_kind=pdf_kind,
         page_count=page_count,
         page_count_display=page_count_display,
+        text_page_count=text_page_count,
+        image_page_count=image_page_count,
         ocr_done=ocr_done,
         lock_flag=lock_flag,
         raw_exists=raw_exists,
@@ -758,8 +778,7 @@ def build_report_text_check_display_status(
     )
 
     (
-        raw_pages_json_exists,
-        clean_pages_json_exists,
+        report_pages_json_exists,
         source_file,
         source_sha256,
     ) = _select_text_check_source(
@@ -809,13 +828,10 @@ def build_report_text_check_display_status(
         project_year=project_year,
         project_no=project_no,
         pdf_filename=pdf_filename,
-        raw_pages_json_exists=(
-            raw_pages_json_exists
-        ),
-        clean_pages_json_exists=(
-            clean_pages_json_exists
-        ),
+
+        report_pages_json_exists=report_pages_json_exists,
         source_file=source_file,
+
         source_sha256=source_sha256,
         text_check_done=text_check_done,
         text_check_level=text_check_level,
