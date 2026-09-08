@@ -748,6 +748,30 @@ def mark_ocr_done(
     )
 
 
+def clear_ocr_done(
+    projects_root: Path,
+    *,
+    project_year: int | str,
+    project_no: int | str,
+) -> Path:
+    # ------------------------------------------------------------
+    # OCR完了状態を解除する
+    #
+    # 用途：
+    # - image頁の処理済み状態を解除した場合に使用する
+    # - PDF基本情報・text抽出状態・cleaning状態は変更しない
+    # ------------------------------------------------------------
+    return _update_processing_status(
+        projects_root,
+        project_year=project_year,
+        project_no=project_no,
+        ocr_done=False,
+        ocr_at=None,
+        ocr_by=None,
+        error_message=None,
+    )
+
+
 def mark_text_extracted(
     projects_root: Path,
     *,

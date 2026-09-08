@@ -15,7 +15,6 @@ from __future__ import annotations
 # imports（stdlib）
 # ============================================================
 from typing import Any
-import struct
 
 # ============================================================
 # imports（common_lib/ai）
@@ -43,66 +42,21 @@ def render_pdf_page_png_bytes_for_gpt_ocr(
     pdf_bytes: bytes,
     page_no_1based: int,
     render_dpi: int = 300,
-    max_long_side_px: int = 4000,
 ) -> bytes:
     # ------------------------------------------------------------
     # PDFの1ページをPNG bytesに変換する
-    #
-    # 通常は指定DPIで描画する．
-    # ただし巨大PDFページでは画像サイズが過大になるため，
-    # 長辺が max_long_side_px を超えないよう自動縮小する．
     # ------------------------------------------------------------
     page_idx = int(page_no_1based) - 1
+    scale = float(render_dpi) / 72.0
 
-    doc = fitz.open(
-        stream=pdf_bytes,
-        filetype="pdf",
-    )
-
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
         page = doc.load_page(page_idx)
-
-        base_scale = (
-            float(render_dpi)
-            / 72.0
-        )
-
-        target_width = (
-            float(page.rect.width)
-            * base_scale
-        )
-
-        target_height = (
-            float(page.rect.height)
-            * base_scale
-        )
-
-        long_side = max(
-            target_width,
-            target_height,
-        )
-
-        scale = base_scale
-
-        if (
-            int(max_long_side_px) > 0
-            and long_side > float(max_long_side_px)
-        ):
-            scale *= (
-                float(max_long_side_px)
-                / float(long_side)
-            )
-
         pix = page.get_pixmap(
-            matrix=fitz.Matrix(
-                scale,
-                scale,
-            ),
+            matrix=fitz.Matrix(scale, scale),
             alpha=False,
         )
-
         return pix.tobytes("png")
-
     finally:
         doc.close()
 
@@ -120,33 +74,6 @@ def run_gpt_ocr_one_page(
     # ------------------------------------------------------------
     # OpenAI Visionで1ページ画像から文字を抽出する
     # ------------------------------------------------------------
-
-    # # ===== DEBUG START =====
-    # print("")
-    # print("========================================")
-    # print("[GPT OCR IMAGE DEBUG]")
-    # print(f"bytes: {len(image_bytes):,}")
-    # print(f"header: {image_bytes[:16]!r}")
-
-    # png_signature_ok = image_bytes.startswith(
-    #     b"\x89PNG\r\n\x1a\n"
-    # )
-
-    # print(f"png_signature_ok: {png_signature_ok}")
-
-    # if png_signature_ok and len(image_bytes) >= 24:
-    #     width, height = struct.unpack(
-    #         ">II",
-    #         image_bytes[16:24],
-    #     )
-
-    #     print(f"width: {width:,}")
-    #     print(f"height: {height:,}")
-    #     print(f"pixels: {width * height:,}")
-
-    # print("========================================")
-    # # ===== DEBUG END =====
-
     res = call_vision_text(
         provider="openai",
         model=str(model),

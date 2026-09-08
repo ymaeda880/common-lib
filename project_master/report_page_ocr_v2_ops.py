@@ -38,6 +38,10 @@ from common_lib.project_master.processing_status_ops import (
     mark_ocr_done,
 )
 
+from common_lib.project_master.report_page_ocr_skip_ops import (
+    is_report_manual_ocr_skip,
+)
+
 from common_lib.project_master.report_pdf_ops import (
     get_report_pdf_path,
 )
@@ -319,12 +323,40 @@ def get_image_ocr_status(
         )
     ]
 
+    skip_pages = [
+        int(row.get("page_no", 0))
+        for row in image_pages
+        if is_report_manual_ocr_skip(
+            row
+        )
+    ]
+
+    blank_page_set = set(
+        blank_pages
+    )
+    skip_page_set = set(
+        skip_pages
+    )
+
     ocr_pages = [
         int(row.get("page_no", 0))
         for row in image_pages
         if (
             bool(row.get("ocr_done", False))
-            and int(row.get("page_no", 0)) not in blank_pages
+            and int(
+                row.get(
+                    "page_no",
+                    0,
+                )
+            )
+            not in blank_page_set
+            and int(
+                row.get(
+                    "page_no",
+                    0,
+                )
+            )
+            not in skip_page_set
         )
     ]
 
@@ -342,6 +374,8 @@ def get_image_ocr_status(
         "ocr_page_count": len(ocr_pages),
         "blank_pages": blank_pages,
         "blank_page_count": len(blank_pages),
+        "skip_pages": skip_pages,
+        "skip_page_count": len(skip_pages),
         "remaining_pages": remaining_pages,
         "next_page": remaining_pages[0] if remaining_pages else None,
         "ocr_done": bool(image_pages) and not remaining_pages,
@@ -361,6 +395,8 @@ def run_image_page_ocr_preview_v2(
     gpt_model: str = "gpt-4.1-mini",
     gpt_max_output_tokens: int = 4000,
     ocr_lang: str = "jpn+eng",
+    s3_ratio_threshold: float = 0.05,
+    gpt_prompt: str | None = None,
 ) -> dict[str, Any]:
     payload = read_report_pages(
         projects_root,
@@ -383,6 +419,15 @@ def run_image_page_ocr_preview_v2(
         raise RuntimeError(
             f"PDF Page {page_no} は"
             "image頁ではありません．"
+        )
+
+    if is_report_manual_ocr_skip(
+        page_row
+    ):
+        raise RuntimeError(
+            f"PDF Page {page_no} は"
+            "テキスト化不要として登録されています．"
+            "130_pdfOCRskip.pyで解除してからOCRしてください．"
         )
 
     pdf_path = get_report_pdf_path(
@@ -464,18 +509,33 @@ def run_image_page_ocr_preview_v2(
         # --------------------------------------------------------
         # 非白紙だけGPT OCR
         # --------------------------------------------------------
-        raw_text, ai_result = (
-            run_gpt_ocr_one_page(
-                image_bytes=image_bytes,
-                model=str(
-                    gpt_model
-                    or "gpt-4.1-mini"
-                ),
-                max_output_tokens=int(
-                    gpt_max_output_tokens
-                ),
+        if gpt_prompt is None:
+            raw_text, ai_result = (
+                run_gpt_ocr_one_page(
+                    image_bytes=image_bytes,
+                    model=str(
+                        gpt_model
+                        or "gpt-4.1-mini"
+                    ),
+                    max_output_tokens=int(
+                        gpt_max_output_tokens
+                    ),
+                )
             )
-        )
+        else:
+            raw_text, ai_result = (
+                run_gpt_ocr_one_page(
+                    image_bytes=image_bytes,
+                    model=str(
+                        gpt_model
+                        or "gpt-4.1-mini"
+                    ),
+                    max_output_tokens=int(
+                        gpt_max_output_tokens
+                    ),
+                    prompt=str(gpt_prompt),
+                )
+            )
 
         raw_text = str(
             raw_text
@@ -588,6 +648,7 @@ def run_image_page_ocr_preview_v2(
         method=method_key,
         content_dark_pixels=content_dark_pixels,
         ocr_char_count=ocr_char_count,
+        s3_ratio_threshold=float(s3_ratio_threshold),
     )
 
     return {
@@ -663,6 +724,14 @@ def mark_image_page_blank_v2(
     )
 
     page_row["blank_page"] = True
+    page_row.pop(
+        "ocr_skip",
+        None,
+    )
+    page_row.pop(
+        "ocr_skip_reason",
+        None,
+    )
 
     save_report_pages(
         projects_root,
@@ -807,6 +876,15 @@ def apply_image_page_ocr_result_v2(
             "image頁ではありません．"
         )
 
+    if is_report_manual_ocr_skip(
+        page_row
+    ):
+        raise RuntimeError(
+            f"PDF Page {page_no} は"
+            "テキスト化不要として登録されています．"
+            "130_pdfOCRskip.pyで解除してからOCRしてください．"
+        )
+
     final_text = str(
         text
         or ""
@@ -831,6 +909,16 @@ def apply_image_page_ocr_result_v2(
     page_row["ocr_by"] = str(
         done_by
         or ""
+    )
+
+    page_row["blank_page"] = False
+    page_row.pop(
+        "ocr_skip",
+        None,
+    )
+    page_row.pop(
+        "ocr_skip_reason",
+        None,
     )
 
     save_report_pages(
@@ -944,6 +1032,8 @@ def run_image_pages_ocr_v2(
     allow_rerun_ocr: bool = False,
     target_page_numbers: list[int] | None = None,
     progress_callback=None,
+    s3_ratio_threshold: float = 0.05,
+    gpt_prompt: str | None = None,
 ) -> dict[str, Any]:
     payload = read_report_pages(
         projects_root,
@@ -980,16 +1070,31 @@ def run_image_pages_ocr_v2(
         }
 
     # ------------------------------------------------------------
+    # 手動OCR不要頁を除外
+    #
+    # allow_rerun_ocr=True であっても，
+    # 130_pdfOCRskip.pyで人がOCR不要と確定したページは
+    # OCR対象へ戻さない．
+    # ------------------------------------------------------------
+    ocr_candidate_rows = [
+        row
+        for row in image_rows
+        if not is_report_manual_ocr_skip(
+            row
+        )
+    ]
+
+    # ------------------------------------------------------------
     # OCR済み除外
     # ------------------------------------------------------------
     if bool(allow_rerun_ocr):
         target_rows = list(
-            image_rows
+            ocr_candidate_rows
         )
     else:
         target_rows = [
             row
-            for row in image_rows
+            for row in ocr_candidate_rows
             if not bool(
                 row.get(
                     "ocr_done",
@@ -1095,6 +1200,10 @@ def run_image_pages_ocr_v2(
                 ocr_lang=str(
                     ocr_lang
                 ),
+                s3_ratio_threshold=float(
+                    s3_ratio_threshold
+                ),
+                gpt_prompt=gpt_prompt,
             )
         )
 

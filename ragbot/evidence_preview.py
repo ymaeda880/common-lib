@@ -518,11 +518,11 @@ def _find_evidence_ranges(
 # ============================================================
 # highlight HTML
 # ============================================================
-
 def _build_highlight_html(
     *,
     text: str,
     ranges: list[tuple[int, int]],
+    font_size: int = 15,
 ) -> str:
     # ------------------------------------------------------------
     # テキストの該当範囲をmarkタグで囲む
@@ -540,7 +540,7 @@ def _build_highlight_html(
             "white-space:pre-wrap;"
             "word-break:break-word;"
             "font-family:monospace;"
-            "font-size:15px;"
+            f"font-size:{int(font_size)}px;"
             "line-height:1.6;"
             "margin:0;"
             "'>"
@@ -618,14 +618,13 @@ def _build_highlight_html(
         "white-space:pre-wrap;"
         "word-break:break-word;"
         "font-family:monospace;"
-        "font-size:15px;"
+        f"font-size:{int(font_size)}px;"
         "line-height:1.6;"
         "margin:0;"
         "'>"
         f"{body}"
         "</pre>"
     )
-
 
 # ============================================================
 # selection signature
@@ -1020,6 +1019,7 @@ def render_evidence_report_preview(
     state_prefix: str,
     pdf_width: int = PDF_PREVIEW_WIDTH,
     text_height: int = TEXT_PREVIEW_HEIGHT,
+    text_font_size: int = 15,
 ) -> None:
     # ------------------------------------------------------------
     # RAG根拠用
@@ -1248,6 +1248,18 @@ def render_evidence_report_preview(
             "#### ページ対応テキスト"
         )
 
+        text_font_size = st.slider(
+            "文字サイズ",
+            min_value=6,
+            max_value=18,
+            value=10,
+            step=1,
+            key=_state_key(
+                state_prefix,
+                "text_font_size",
+            ),
+        )
+
         raw_page_text = str(
             pages_map.get(
                 int(
@@ -1347,6 +1359,7 @@ def render_evidence_report_preview(
             _build_highlight_html(
                 text=display_text,
                 ranges=highlight_ranges,
+                font_size=text_font_size,
             )
         )
 

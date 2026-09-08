@@ -226,6 +226,7 @@ def get_hallucination_result(
     method: str,
     content_dark_pixels: int,
     ocr_char_count: int,
+    s3_ratio_threshold: float = 0.06,
 ) -> tuple[bool, str]:
     # ------------------------------------------------------------
     # GPT Vision OCRについて，
@@ -280,25 +281,32 @@ def get_hallucination_result(
                 f"GPT OCRが{char_count:,}文字を生成しました．"
             ),
         )
-
     # --------------------------------------------------------
     # S3：画像情報量に対してOCR文字量が異常に多い
     #
     # 本文由来dark pixelsが500を超えている場合でも，
-    # OCR文字数 / dark pixels が0.05以上なら疑いとする．
+    # OCR文字数 / dark pixels がS3しきい値以上なら疑いとする．
+    #
+    # 通常しきい値は0.06．
+    # 呼び出し側から一時的なしきい値を指定できる．
     #
     # 950での確認値：
     # - 正常1行      ：約0.0171
     # - 正常複数行  ：約0.0135
     # - 1行＋75文字：約0.0512
     # --------------------------------------------------------
+    s3_threshold = max(
+        0.06,
+        float(s3_ratio_threshold),
+    )
+
     if (
         dark_pixels > 500
         and char_count >= 10
         and (
             char_count
             / dark_pixels
-        ) >= 0.05
+        ) >= s3_threshold
     ):
         ocr_ratio = (
             char_count
@@ -312,7 +320,8 @@ def get_hallucination_result(
                 "異常に多い可能性があります．"
                 f" dark pixels={dark_pixels:,}，"
                 f"OCR文字数={char_count:,}，"
-                f"OCR比率={ocr_ratio:.6f}"
+                f"OCR比率={ocr_ratio:.6f}，"
+                f"S3しきい値={s3_threshold:.6f}"
             ),
         )
 
