@@ -16,7 +16,7 @@ from __future__ import annotations
 # imports
 # =============================================================================
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,11 +35,12 @@ MAX_LATEST_HISTORY_FILES = 5
 # =============================================================================
 # helper
 # =============================================================================
-def _now_iso_utc() -> str:
+def _now_iso_local() -> str:
     # -------------------------------------------------------------------------
-    # UTC ISO文字列
+    # ローカル時刻 ISO文字列
+    # - minutes_app 等と同様にサーバーのローカル時刻を使用する
     # -------------------------------------------------------------------------
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now().isoformat()
 
 
 def _now_history_timestamp() -> str:
@@ -124,7 +125,7 @@ def build_latest_payload(
     # latest.json 用 payload を構築
     # -------------------------------------------------------------------------
     return {
-        "updated_at": _now_iso_utc(),
+        "updated_at": _now_iso_local(),
         "user_sub": str(user_sub or "").strip(),
         "query": {
             "question": str(question or "").strip(),

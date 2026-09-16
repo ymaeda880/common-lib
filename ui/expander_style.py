@@ -71,7 +71,7 @@ def render_theme_expander_css(
         }}
 
         .st-key-{container_key} div[data-testid="stExpander"] summary p {{
-            <!-- font-size: 1.10rem !important; -->
+            /* font-size: 1.10rem !important; */
             font-size: 0.8rem !important;
             font-weight: 800 !important;
             color: {theme_accent} !important;
@@ -98,14 +98,45 @@ def render_theme_expander_css(
         }}
 
         /* =====================================================
-           expander本文フォントサイズ
-           - p  : 通常本文
-           - li : 箇条書き
-           - 説明文全体の文字サイズを調整する場所
+           expander本文の文字色・フォントサイズ
+           - 背景を白系で固定しているため，文字色も濃色に固定する
+           - ダークモードでも白背景＋白文字にならないようにする
            ===================================================== */
+        .st-key-{container_key} div[data-testid="stExpanderDetails"] {{
+            color: #262730 !important;
+        }}
+
+        .st-key-{container_key} div[data-testid="stExpanderDetails"] p,
+        .st-key-{container_key} div[data-testid="stExpanderDetails"] li,
+        .st-key-{container_key} div[data-testid="stExpanderDetails"] h1,
+        .st-key-{container_key} div[data-testid="stExpanderDetails"] h2,
+        .st-key-{container_key} div[data-testid="stExpanderDetails"] h3,
+        .st-key-{container_key} div[data-testid="stExpanderDetails"] h4,
+        .st-key-{container_key} div[data-testid="stExpanderDetails"] h5,
+        .st-key-{container_key} div[data-testid="stExpanderDetails"] h6 {{
+            color: #262730 !important;
+        }}
+
         .st-key-{container_key} div[data-testid="stExpanderDetails"] p,
         .st-key-{container_key} div[data-testid="stExpanderDetails"] li {{
             font-size: 0.90rem !important;
+        }}
+
+        /* =====================================================
+           tabs文字色
+           - 非選択タブも白背景上で読めるようにする
+           - 選択中タブはthemeのアクセント色を使用する
+           ===================================================== */
+        .st-key-{container_key}
+        div[data-testid="stExpanderDetails"]
+        button[data-baseweb="tab"] {{
+            color: #555555 !important;
+        }}
+
+        .st-key-{container_key}
+        div[data-testid="stExpanderDetails"]
+        button[data-baseweb="tab"][aria-selected="true"] {{
+            color: {theme_accent} !important;
         }}
 
         /* =====================================================

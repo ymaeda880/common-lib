@@ -285,6 +285,51 @@ def update_project(
 
 
 # ============================================================
+# public（list by year）
+# ============================================================
+def list_projects_by_year(
+    projects_root: Path,
+    *,
+    project_year: int | str,
+    role: str = "main",
+) -> list[Project]:
+    """
+    指定年度のprojectsをproject_no昇順で取得する。
+    """
+
+    y = normalize_year_4digits(project_year)
+
+    db_path = get_project_master_db_path(
+        projects_root,
+        role=role,
+    )
+
+    _require_projects_table(db_path)
+
+    conn = _connect(db_path)
+
+    try:
+        cur = conn.execute(
+            """
+            SELECT *
+            FROM projects
+            WHERE project_year = ?
+            ORDER BY project_no
+            """,
+            (y,),
+        )
+
+        rows = cur.fetchall()
+
+        return [
+            Project.from_row(dict(row))
+            for row in rows
+        ]
+
+    finally:
+        conn.close()
+
+# ============================================================
 # public（count by year）
 # ============================================================
 def count_projects_by_year(

@@ -571,14 +571,24 @@ def get_processed_record(
 ) -> Optional[ProcessedFileRecord]:
     # -----------------------------------------------------------------------------
     # processed_files.json から doc_id 一致の1件を取得
+    #
+    # 一覧表示などの processed 判定では，
+    # vectors.npy / meta.jsonl は不要なので読み込まない。
     # -----------------------------------------------------------------------------
-    snapshot = load_vectorstore_snapshot(
+    paths = get_vectorstore_paths(
         databases_root=databases_root,
         collection_id=collection_id,
         shard_id=shard_id,
     )
 
-    return find_processed_record_by_doc_id(snapshot.processed_records, doc_id)
+    processed_records = load_processed_records(
+        paths.processed_path,
+    )
+
+    return find_processed_record_by_doc_id(
+        processed_records,
+        doc_id,
+    )
 
 
 def is_doc_id_processed(

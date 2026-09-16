@@ -73,6 +73,10 @@ from common_lib.pdf_tools.text_extract.fitz_guard import (
     try_import_fitz,
 )
 
+from common_lib.pdf_tools.pdf_blank_page import (
+    is_effectively_blank_pdf_page,
+)
+
 from common_lib.pdf_tools.ocr_hallucination import (
     append_hallucination_log,
     get_hallucination_result,
@@ -93,7 +97,7 @@ def _build_clean_options() -> CleanOptions:
         repeated_min_count=3,
         repeated_max_len=40,
         join_wrapped_lines=True,
-        drop_garbage_english_lines=True,
+        drop_garbage_english_lines=False,
         drop_decoration_lines=True,
         drop_tiny_noise_lines=True,
     )
@@ -150,89 +154,6 @@ def _is_no_content_ocr_text(
             normalized,
         )
     )
-
-
-# ============================================================
-# helpers（白紙判定）
-# ============================================================
-
-def _is_effectively_blank_pdf_page(
-    *,
-    fitz: Any,
-    pdf_bytes: bytes,
-    page_no: int,
-    render_dpi: int = 72,
-    dark_threshold: int = 245,
-    max_dark_pixels: int = 20,
-) -> bool:
-    # ------------------------------------------------------------
-    # PDFの指定ページを低解像度グレースケールで描画し，
-    # 明確に白ではない画素がほぼ存在しなければ白紙と判定する．
-    #
-    # 注意：
-    # - OCR用AIには送らない機械判定
-    # - Page 5 / Page 9のような少量文字ページを
-    #   白紙扱いしないよう，非常に厳しい条件にする
-    # ------------------------------------------------------------
-    document = fitz.open(
-        stream=pdf_bytes,
-        filetype="pdf",
-    )
-
-    try:
-        target_page_no = int(page_no)
-
-        if (
-            target_page_no < 1
-            or target_page_no > int(document.page_count)
-        ):
-            raise ValueError(
-                "白紙判定対象ページが"
-                "PDFのページ範囲外です．"
-                f" page_no={target_page_no}"
-            )
-
-        page = document.load_page(
-            target_page_no - 1
-        )
-
-        scale = (
-            float(render_dpi)
-            / 72.0
-        )
-
-        pixmap = page.get_pixmap(
-            matrix=fitz.Matrix(
-                scale,
-                scale,
-            ),
-            colorspace=fitz.csGRAY,
-            alpha=False,
-        )
-
-        samples = pixmap.samples
-
-        if not samples:
-            return True
-
-        dark_pixel_count = 0
-
-        for value in samples:
-            if int(value) < int(
-                dark_threshold
-            ):
-                dark_pixel_count += 1
-
-                if dark_pixel_count > int(
-                    max_dark_pixels
-                ):
-                    return False
-
-        return True
-
-    finally:
-        document.close()
-
 
 
 # ============================================================
@@ -461,6 +382,34 @@ def run_image_page_ocr_preview_v2(
     fitz = fitz_res.fitz
     method_key = str(method or "").strip()
 
+    # ------------------------------------------------------------
+    # OCR用画像の回転角
+    #
+    # 130_pdfOCRskip.py で report_pages.json に保存した
+    # ocr_rotation_deg を使用する．
+    #
+    # キーが存在しない既存データは 0度として扱う．
+    # ------------------------------------------------------------
+    rotation_deg = int(
+        page_row.get(
+            "ocr_rotation_deg",
+            0,
+        )
+        or 0
+    )
+
+    if rotation_deg not in (
+        0,
+        90,
+        180,
+        270,
+    ):
+        raise RuntimeError(
+            f"PDF Page {page_no} の"
+            "ocr_rotation_deg が不正です．"
+            f" rotation_deg={rotation_deg}"
+        )
+
     ai_results: list[Any] = []
 
     # ------------------------------------------------------------
@@ -470,7 +419,7 @@ def run_image_page_ocr_preview_v2(
     # 実質完全白紙ならGPT / Tesseractへ送らない．
     # ------------------------------------------------------------
     is_blank_page = (
-        _is_effectively_blank_pdf_page(
+        is_effectively_blank_pdf_page(
             fitz=fitz,
             pdf_bytes=pdf_bytes,
             page_no=int(page_no),
@@ -488,6 +437,9 @@ def run_image_page_ocr_preview_v2(
                 pdf_bytes=pdf_bytes,
                 page_no_1based=int(page_no),
                 render_dpi=300,
+                rotation_deg=int(
+                    rotation_deg
+                ),
             )
         )
 

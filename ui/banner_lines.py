@@ -52,6 +52,9 @@ BANNER_STYLES: Dict[str, str] = {
     "pink_soft": "linear-gradient(90deg,#f48fb1,#f8bbd0)",
     "purple_light": "linear-gradient(90deg,#b39ddb,#d1c4e9)",
 
+    # --- Proposal Studio ---
+    "proposal_gold": "linear-gradient(90deg,#b7791f,#f6c453)",
+
         # --- 明るい赤・暖色系 ---
     "red_soft": "linear-gradient(90deg,#ef5350,#e57373)",        # やわらかい赤
     "salmon": "linear-gradient(90deg,#ff8a65,#ffab91)",         # サーモン系（軽め）

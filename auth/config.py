@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover
 
 # ========= JWT / Cookie 設定 =========
 JWT_ALGO = "HS256"
-JWT_TTL_SECONDS = 8 * 3600
+JWT_TTL_SECONDS = 12 * 3600
 JWT_ISS = "prec"
 JWT_AUD = "prec-clients"
 COOKIE_NAME = "prec_sso"

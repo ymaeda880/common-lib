@@ -32,6 +32,12 @@ CHAT_PRICES_USD_PER_1M: Dict[str, ChatPricePer1M] = {
     "gpt-5-mini": ChatPricePer1M(in_usd=0.25, out_usd=2.00),
     "gpt-5-nano": ChatPricePer1M(in_usd=0.05, out_usd=0.40),
 
+    # GPT-5.4
+    "gpt-5.4-mini": ChatPricePer1M(
+        in_usd=0.75,
+        out_usd=4.50,
+    ),
+
     # Azure OpenAI
     # - 現時点では OpenAI / gpt-5-mini と同額に設定
     # - Azure 側の正式単価を確認したらここだけ変更する

@@ -37,6 +37,7 @@ from common_lib.project_master.projects_repo import (
     get_project,
     insert_project,
     update_project,
+    list_projects_by_year,
     count_projects_by_year,
     delete_projects_by_year,
 )
