@@ -96,7 +96,7 @@ def _build_clean_options() -> CleanOptions:
         drop_repeated_lines=True,
         repeated_min_count=3,
         repeated_max_len=40,
-        join_wrapped_lines=True,
+        join_wrapped_lines=False,
         drop_garbage_english_lines=False,
         drop_decoration_lines=True,
         drop_tiny_noise_lines=True,
@@ -107,54 +107,72 @@ def _is_no_content_ocr_text(
     text: str,
 ) -> bool:
     # ------------------------------------------------------------
-    # OCR結果が「内容なし」を示す定型文とページ番号程度だけなら
-    # RAG本文として採用せず，白紙相当として扱う
+    # OCR結果が「内容なし」を示す定型応答なら，
+    # RAG本文として採用せず，白紙相当として扱う．
+    #
+    # 判定：
+    # 1. GPTの既知の長い定型応答 → 完全一致
+    # 2. 20文字以下 → 無内容表現を含むか確認
+    #
+    # 通常本文の誤判定を避けるため，
+    # 長文に対する部分一致は行わない．
     # ------------------------------------------------------------
     value = str(text or "").strip()
+
     if not value:
         return True
 
-    normalized = re.sub(r"\s+", "", value)
+    # 空白・改行を除去
+    normalized = re.sub(
+        r"\s+",
+        "",
+        value,
+    )
 
+    # 文末の句読点は無視
+    normalized = normalized.rstrip(
+        "。．."
+    )
+
+    # ------------------------------------------------------------
+    # ① GPTが返す既知の「内容なし」定型文
+    #    長い文章なので完全一致だけ許可する
+    # ------------------------------------------------------------
+    exact_no_content_texts = (
+        "申し訳ありませんが、この画像から文字を抽出することができません",
+        "申し訳ありませんが、この画像には文字が含まれていません",
+        "この画像から文字を抽出することができません",
+        "この画像には文字が含まれていません",
+    )
+
+    if normalized in exact_no_content_texts:
+        return True
+
+    # ------------------------------------------------------------
+    # ② 20文字を超える文章は，これ以上判定しない
+    # ------------------------------------------------------------
+    if len(normalized) > 20:
+        return False
+
+    # ------------------------------------------------------------
+    # ③ 20文字以下の短い「内容なし」応答
+    # ------------------------------------------------------------
     no_content_phrases = (
-        "申し訳ありませんが、この画像には文字が含まれていません。",
-        "この画像には文字が含まれていません。",
-        "画像には文字が含まれていません。",
-        "文字が含まれていません。",
-        "文字はありません。",
-        "テキストはありません。",
+        "文字が含まれていません",
+        "文字はありません",
+        "文字がありません",
+        "テキストはありません",
+        "テキストがありません",
         "記載内容なし",
         "記載なし",
         "文字なし",
         "テキストなし",
     )
 
-    for phrase in no_content_phrases:
-        normalized = normalized.replace(
-            re.sub(r"\s+", "", phrase),
-            "",
-        )
-
-    # ------------------------------------------------------------
-    # 定型文を除いた残りがページ番号程度なら無内容とする
-    #
-    # 例：
-    # - 3-20
-    # - 3－20
-    # - 20
-    # ------------------------------------------------------------
-    normalized = normalized.strip()
-
-    if not normalized:
-        return True
-
-    return bool(
-        re.fullmatch(
-            r"[0-9０-９]+(?:[-－–—][0-9０-９]+)?",
-            normalized,
-        )
+    return any(
+        phrase in normalized
+        for phrase in no_content_phrases
     )
-
 
 # ============================================================
 # helpers（page取得）
@@ -385,12 +403,19 @@ def run_image_page_ocr_preview_v2(
     # ------------------------------------------------------------
     # OCR用画像の回転角
     #
-    # 130_pdfOCRskip.py で report_pages.json に保存した
-    # ocr_rotation_deg を使用する．
+    # 130_pdfOCRskip.py の ocr_rotation_deg は，
+    # 「現在の文字方向」を表す．
     #
-    # キーが存在しない既存データは 0度として扱う．
+    # OCRでは文字を正立させる必要があるため，
+    # 保存された文字方向とは逆方向に画像を回転する．
+    #
+    # 文字方向：
+    #   0   → 補正 0
+    #   90  → 補正 270
+    #   180 → 補正 180
+    #   270 → 補正 90
     # ------------------------------------------------------------
-    rotation_deg = int(
+    text_direction_deg = int(
         page_row.get(
             "ocr_rotation_deg",
             0,
@@ -398,7 +423,7 @@ def run_image_page_ocr_preview_v2(
         or 0
     )
 
-    if rotation_deg not in (
+    if text_direction_deg not in (
         0,
         90,
         180,
@@ -407,8 +432,12 @@ def run_image_page_ocr_preview_v2(
         raise RuntimeError(
             f"PDF Page {page_no} の"
             "ocr_rotation_deg が不正です．"
-            f" rotation_deg={rotation_deg}"
+            f" text_direction_deg={text_direction_deg}"
         )
+
+    rotation_deg = (
+        -text_direction_deg
+    ) % 360
 
     ai_results: list[Any] = []
 
@@ -547,16 +576,39 @@ def run_image_page_ocr_preview_v2(
             f" method={method_key}"
         )
 
+    # ------------------------------------------------------------
+    # OCR結果が空の場合
+    #
+    # GPTが文字のないページに対して空文字を返すことがあるため，
+    # OCRエラーにはせず，白紙ページとして扱う．
+    # ------------------------------------------------------------
     if not raw_text.strip():
-        raise RuntimeError(
-            f"PDF Page {page_no} の"
-            "OCR結果が空です．"
-        )
+        return {
+            "page_no": int(page_no),
+            "raw_text": "",
+            "clean_text": "",
+            "ai_results": list(ai_results or []),
+            "method": method_key,
+            "is_blank": True,
+            "hallucination_suspected": False,
+            "hallucination_reason": "",
+        }
 
     clean_text, _clean_report = clean_ocr_text(
         raw_text,
         _build_clean_options(),
     )
+
+    # ===== DEBUG START =====
+    # print("")
+    # print("========================================")
+    # print("[OCR RAW TEXT]")
+    # print(repr(raw_text))
+    # print("----------------------------------------")
+    # print("[OCR CLEAN TEXT]")
+    # print(repr(clean_text))
+    # print("========================================")
+    # ===== DEBUG END =====
 
     # ------------------------------------------------------------
     # ハルシネーション判定用データ

@@ -3,41 +3,17 @@
 # JWT の発行・検証
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
-import datetime as dt
 import time
 from typing import List, Tuple, Optional
 import jwt
 
-from .config import JWT_SECRET, JWT_ALGO, JWT_ISS, JWT_AUD
+from .config import JWT_SECRET, JWT_ALGO, JWT_TTL_SECONDS, JWT_ISS, JWT_AUD
 
 
 def issue_jwt(sub: str, apps: List[str]) -> Tuple[str, int]:
-    """
-    JWT を発行し (token, exp) を返す。
-
-    有効期限：
-    - 毎日午前3時を認証の切替時刻とする
-    - 午前3時より前のログイン → 当日の午前3時まで
-    - 午前3時以降のログイン → 翌日の午前3時まで
-    """
-    now_dt = dt.datetime.now().astimezone()
-    now = int(now_dt.timestamp())
-
-    # ============================================================
-    # 次に到来する午前3時をJWT有効期限にする
-    # ============================================================
-    expire_dt = now_dt.replace(
-        hour=3,
-        minute=0,
-        second=0,
-        microsecond=0,
-    )
-
-    if now_dt >= expire_dt:
-        expire_dt += dt.timedelta(days=1)
-
-    exp = int(expire_dt.timestamp())
-
+    """JWT を発行し (token, exp) を返す"""
+    now = int(time.time())
+    exp = now + JWT_TTL_SECONDS
     payload = {
         "sub": sub,
         "apps": apps,
@@ -46,14 +22,9 @@ def issue_jwt(sub: str, apps: List[str]) -> Tuple[str, int]:
         "iat": now,
         "exp": exp,
     }
-
-    token = jwt.encode(
-        payload,
-        JWT_SECRET,
-        algorithm=JWT_ALGO,
-    )
-
+    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
     return token, exp
+
 
 def verify_jwt(token: Optional[str]):
     """JWT を検証して payload を返す（失敗時は None）"""

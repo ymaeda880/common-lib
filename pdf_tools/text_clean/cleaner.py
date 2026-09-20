@@ -213,10 +213,10 @@ def _remove_japanese_in_sentence_spaces(text: str) -> str:
     """
     t = text
     # 日本語 ↔ 日本語
-    t = re.sub(rf"(?<=[{_JP_OR_KANJI}])\s+(?=[{_JP_OR_KANJI}])", "", t)
+    t = re.sub(rf"(?<=[{_JP_OR_KANJI}])[ \t]+(?=[{_JP_OR_KANJI}])", "", t)
     # 数字 ↔ 日本語
-    t = re.sub(rf"(?<=\d)\s+(?=[{_JP_OR_KANJI}])", "", t)
-    t = re.sub(rf"(?<=[{_JP_OR_KANJI}])\s+(?=\d)", "", t)
+    t = re.sub(rf"(?<=\d)[ \t]+(?=[{_JP_OR_KANJI}])", "", t)
+    t = re.sub(rf"(?<=[{_JP_OR_KANJI}])[ \t]+(?=\d)", "", t)
     return t
 
 

@@ -41,12 +41,18 @@ from lib.pdf_text_extraction.contract_text_extraction_ops import (
 
 OCR_ROTATION_FIELD = "ocr_rotation_deg"
 
+OCR_CROP_LEFT_FIELD = "ocr_crop_left_pct"
+OCR_CROP_RIGHT_FIELD = "ocr_crop_right_pct"
+
 VALID_OCR_ROTATIONS = (
     0,
     90,
     180,
     270,
 )
+
+MIN_OCR_CROP_PCT = 0
+MAX_OCR_CROP_PCT = 30
 
 
 # ============================================================
@@ -167,6 +173,25 @@ def _normalize_rotation_deg(
 
     return value
 
+def _normalize_crop_pct(
+    crop_pct: int,
+) -> int:
+    value = int(
+        crop_pct
+    )
+
+    if (
+        value < MIN_OCR_CROP_PCT
+        or value > MAX_OCR_CROP_PCT
+    ):
+        raise ValueError(
+            "OCR端部除外率は "
+            f"{MIN_OCR_CROP_PCT}～"
+            f"{MAX_OCR_CROP_PCT}% "
+            "の範囲で指定してください．"
+        )
+
+    return value
 
 # ============================================================
 # public：複数image頁のOCR方向を保存
@@ -386,5 +411,183 @@ def set_contract_pages_ocr_rotation(
             int(page_no): int(rotation_deg)
             for page_no, rotation_deg
             in normalized_rotation_by_page.items()
+        },
+    }
+
+# ============================================================
+# public：複数image頁のOCR左右端除外率を保存
+# ============================================================
+
+def set_contract_image_pages_ocr_crop(
+    projects_root: Path,
+    *,
+    project_year: int,
+    project_no: str,
+    crop_by_page: dict[int, dict[str, int]],
+) -> dict[str, Any]:
+    """
+    contract_pages.json のimage頁に，
+    OCR時の左右端除外率を保存する．
+
+    保存フィールド：
+    - ocr_crop_left_pct
+    - ocr_crop_right_pct
+
+    PDF本体，page_kind，OCR状態等は変更しない．
+    """
+
+    if not crop_by_page:
+        return {
+            "status": "skip",
+            "processed_pages": [],
+            "crop_by_page": {},
+        }
+
+    payload = read_contract_pages(
+        projects_root,
+        project_year=int(
+            project_year
+        ),
+        project_no=str(
+            project_no
+        ),
+    )
+
+    normalized_crop_by_page: dict[
+        int,
+        dict[str, int],
+    ] = {}
+
+    for page_no, crop_values in (
+        crop_by_page.items()
+    ):
+        normalized_page_no = int(
+            page_no
+        )
+
+        if not isinstance(
+            crop_values,
+            dict,
+        ):
+            raise ValueError(
+                f"PDF Page {normalized_page_no} の"
+                "OCR端部除外設定がdictではありません．"
+            )
+
+        crop_left_pct = _normalize_crop_pct(
+            crop_values.get(
+                "left",
+                0,
+            )
+        )
+
+        crop_right_pct = _normalize_crop_pct(
+            crop_values.get(
+                "right",
+                0,
+            )
+        )
+
+        if (
+            crop_left_pct
+            + crop_right_pct
+            >= 100
+        ):
+            raise ValueError(
+                f"PDF Page {normalized_page_no} の"
+                "左右端除外率が不正です．"
+            )
+
+        normalized_crop_by_page[
+            normalized_page_no
+        ] = {
+            "left": int(
+                crop_left_pct
+            ),
+            "right": int(
+                crop_right_pct
+            ),
+        }
+
+    processed_pages: list[int] = []
+
+    for page_no in sorted(
+        normalized_crop_by_page
+    ):
+        page_row = _find_page_row(
+            payload,
+            page_no=int(
+                page_no
+            ),
+        )
+
+        _validate_image_page(
+            page_row,
+            page_no=int(
+                page_no
+            ),
+        )
+
+        crop_values = (
+            normalized_crop_by_page[
+                page_no
+            ]
+        )
+
+        page_row[
+            OCR_CROP_LEFT_FIELD
+        ] = int(
+            crop_values[
+                "left"
+            ]
+        )
+
+        page_row[
+            OCR_CROP_RIGHT_FIELD
+        ] = int(
+            crop_values[
+                "right"
+            ]
+        )
+
+        processed_pages.append(
+            int(
+                page_no
+            )
+        )
+
+    pages_path = get_contract_pages_path(
+        projects_root,
+        project_year=int(
+            project_year
+        ),
+        project_no=str(
+            project_no
+        ),
+    )
+
+    _write_json_atomic(
+        pages_path,
+        payload,
+    )
+
+    return {
+        "status": "ok",
+        "processed_pages": processed_pages,
+        "crop_by_page": {
+            int(page_no): {
+                "left": int(
+                    crop_values[
+                        "left"
+                    ]
+                ),
+                "right": int(
+                    crop_values[
+                        "right"
+                    ]
+                ),
+            }
+            for page_no, crop_values
+            in normalized_crop_by_page.items()
         },
     }

@@ -30,6 +30,9 @@ DEFAULT_TEXT_MODEL_KEY = "openai:gpt-5-mini"
 # ============================================================
 IMAGE_MODEL_CATALOG = [
     ("OpenAI / gpt-image-1", "openai:gpt-image-1"),
+    ("OpenAI / gpt-image-2", "openai:gpt-image-2"),
+    ("OpenAI / gpt-image-2.5-flare", "openai:gpt-image-2.5-flare"),
+    ("OpenAI / gpt-image-2.5-sunburst", "openai:gpt-image-2.5-sunburst"),
     ("Gemini / gemini-2.5-flash-image", "gemini:gemini-2.5-flash-image"),
 ]
 

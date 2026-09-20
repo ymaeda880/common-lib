@@ -32,7 +32,59 @@ def _extract_text(res: Any) -> str:
         if parts:
             return "".join(parts)
 
-    raise InvalidResponseError("OpenAI responses.create: テキスト抽出に失敗しました")
+    #raise InvalidResponseError("OpenAI responses.create: テキスト抽出に失敗しました")
+    # ------------------------------------------------------------
+    # テキストを取得できなかった場合の診断情報
+    #
+    # Responses API自体は成功していても，
+    # max_output_tokens到達等で通常のテキスト出力が
+    # 得られない場合があるため，終了状態を表示する．
+    # ------------------------------------------------------------
+    status = getattr(
+        res,
+        "status",
+        None,
+    )
+
+    incomplete_details = getattr(
+        res,
+        "incomplete_details",
+        None,
+    )
+
+    incomplete_reason = getattr(
+        incomplete_details,
+        "reason",
+        None,
+    )
+
+    usage = getattr(
+        res,
+        "usage",
+        None,
+    )
+
+    input_tokens = getattr(
+        usage,
+        "input_tokens",
+        None,
+    )
+
+    output_tokens = getattr(
+        usage,
+        "output_tokens",
+        None,
+    )
+
+    raise InvalidResponseError(
+        "OpenAI responses.create: "
+        "テキスト抽出に失敗しました"
+        f" ／ status={status}"
+        f" ／ reason={incomplete_reason}"
+        f" ／ input_tokens={input_tokens}"
+        f" ／ output_tokens={output_tokens}"
+    )
+
 
 
 def _extract_usage(res: Any) -> UsageSummary:
