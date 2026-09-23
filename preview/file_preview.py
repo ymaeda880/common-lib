@@ -174,16 +174,14 @@ def _get_zoom_percent(preview_id: str, raw_kind: str) -> int:
         return 100
 
 
-# ============================================================
-# helpers（fitz）
-# ============================================================
 def try_import_fitz():
+
     # ------------------------------------------------------------
-    # PyMuPDF(fitz) を安全に import する
+    # PyMuPDF を安全に import する
     # ------------------------------------------------------------
     try:
-        import fitz  # type: ignore
-        return fitz
+        import pymupdf
+        return pymupdf
     except Exception:
         return None
 

@@ -270,3 +270,42 @@ def openai_call_vision_text(
     res = _fill_text_cost_if_missing(res=res, model=str(model))
 
     return res
+
+
+# ============================================================
+# OpenAI（Vision Text / 複数画像）
+# ============================================================
+def openai_call_vision_text_multi(
+    *,
+    model: str,
+    image_bytes_list: list[bytes],
+    prompt: str,
+    system: Optional[str],
+    max_output_tokens: Optional[int],
+    extra: Optional[Dict[str, Any]],
+) -> TextResult:
+    # ------------------------------------------------------------
+    # OpenAI Vision Text 複数画像実行
+    # ------------------------------------------------------------
+    from ..providers.openai.vision_responses_create import (
+        call_vision_responses_create_multi,
+    )
+
+    res = call_vision_responses_create_multi(
+        model=model,
+        image_bytes_list=image_bytes_list,
+        prompt=prompt,
+        system=system,
+        max_output_tokens=max_output_tokens,
+        extra=extra,
+    )
+
+    # ------------------------------------------------------------
+    # cost（正本）
+    # ------------------------------------------------------------
+    res = _fill_text_cost_if_missing(
+        res=res,
+        model=str(model),
+    )
+
+    return res

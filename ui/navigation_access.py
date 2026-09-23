@@ -35,8 +35,8 @@ from common_lib.auth.navigation_auth import (
     is_navigation_admin,
     is_navigation_developer,
     is_navigation_logged_in,
+    is_navigation_planning,
 )
-
 
 # ============================================================
 # DEBUG override
@@ -126,6 +126,27 @@ def _can_show_developer_item() -> bool:
     )
 
 
+
+
+# ============================================================
+# navigation planning
+# ============================================================
+
+def _can_show_planning_item() -> bool:
+    # ------------------------------------------------------------
+    # navigation表示用の企画部門判定
+    #
+    # DEBUG_FORCE_GENERAL_USER=True の場合は，
+    # 企画部門用項目を非表示にする
+    # ------------------------------------------------------------
+
+    if _DEBUG_FORCE_GENERAL_USER:
+        return False
+
+    return bool(
+        is_navigation_planning()
+    )
+
 # ============================================================
 # page
 # ============================================================
@@ -140,6 +161,7 @@ def nav_page(
     login: bool | None = None,
     admin_only: bool = False,
     developer_only: bool = False,
+    planning_only: bool = False,
 ) -> Any | None:
     # ------------------------------------------------------------
     # 権限付き st.Page
@@ -163,6 +185,16 @@ def nav_page(
     # login の指定より権限判定を優先する
     # ------------------------------------------------------------
 
+    # --------------------------------------------------------
+    # 企画部門専用
+    # --------------------------------------------------------
+
+    if (
+        planning_only
+        and not _can_show_planning_item()
+    ):
+        return None
+    
     # --------------------------------------------------------
     # 開発者専用
     # --------------------------------------------------------
@@ -193,6 +225,7 @@ def nav_page(
     if (
         not developer_only
         and not admin_only
+        and not planning_only
     ):
 
         # ----------------------------------------------------
@@ -246,6 +279,7 @@ def nav_group(
     login: bool | None = None,
     admin_only: bool = False,
     developer_only: bool = False,
+    planning_only: bool = False,
 ) -> list[Any]:
     # ------------------------------------------------------------
     # navigationカテゴリ単位の権限制御
@@ -265,9 +299,23 @@ def nav_group(
     # developer_only=True
     #   → 開発者だけグループを表示
     #
+    # planning_only=True
+    #   → 企画部門ユーザーだけグループを表示
+    #     開発者も表示対象とする
+    #
     # 各ページ側の None もここで除去する
     # ------------------------------------------------------------
 
+    # --------------------------------------------------------
+    # 企画部門専用グループ
+    # --------------------------------------------------------
+
+    if (
+        planning_only
+        and not _can_show_planning_item()
+    ):
+        return []
+    
     # --------------------------------------------------------
     # 開発者専用グループ
     # --------------------------------------------------------
@@ -291,13 +339,15 @@ def nav_group(
     # --------------------------------------------------------
     # ログイン状態によるグループ表示制御
     #
-    # developer_only=True / admin_only=True の場合は，
+    # developer_only=True / admin_only=True /
+    # planning_only=True の場合は，
     # 権限判定だけを使用する
     # --------------------------------------------------------
 
     if (
         not developer_only
         and not admin_only
+        and not planning_only
     ):
 
         # ----------------------------------------------------

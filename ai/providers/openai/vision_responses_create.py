@@ -133,3 +133,98 @@ def call_vision_responses_create(
         usage=getattr(resp, "usage", None),
         cost=None,
     )
+
+
+# ============================================================
+# public：Vision Text（複数画像）
+# ============================================================
+def call_vision_responses_create_multi(
+    *,
+    model: str,
+    image_bytes_list: list[bytes],
+    prompt: str,
+    system: Optional[str],
+    max_output_tokens: Optional[int],
+    extra: Optional[Dict[str, Any]],
+) -> TextResult:
+    # ------------------------------------------------------------
+    # OpenAI Responses API に複数画像＋promptを
+    # 1回のリクエストで渡してテキストを得る
+    # ------------------------------------------------------------
+    if not image_bytes_list:
+        raise RuntimeError("image_bytes_list is empty")
+
+    client = get_client()
+
+    input_messages: list[dict[str, Any]] = []
+
+    if system:
+        input_messages.append(
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": str(system),
+                    }
+                ],
+            }
+        )
+
+    user_content: list[dict[str, Any]] = [
+        {
+            "type": "input_text",
+            "text": str(prompt),
+        }
+    ]
+
+    for image_bytes in image_bytes_list:
+        user_content.append(
+            {
+                "type": "input_image",
+                "image_url": _to_png_data_url(
+                    image_bytes
+                ),
+                "detail": "high",
+            }
+        )
+
+    input_messages.append(
+        {
+            "role": "user",
+            "content": user_content,
+        }
+    )
+
+    kwargs: dict[str, Any] = {
+        "model": str(model),
+        "input": input_messages,
+    }
+
+    if max_output_tokens is not None:
+        kwargs["max_output_tokens"] = int(
+            max_output_tokens
+        )
+
+    if extra:
+        kwargs.update(
+            dict(extra)
+        )
+
+    resp = client.responses.create(
+        **kwargs
+    )
+
+    return TextResult(
+        provider="openai",
+        model=str(model),
+        text=_extract_output_text(
+            resp
+        ),
+        usage=getattr(
+            resp,
+            "usage",
+            None,
+        ),
+        cost=None,
+    )

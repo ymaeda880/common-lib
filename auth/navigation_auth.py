@@ -38,6 +38,7 @@ import streamlit as st
 from common_lib.auth.auth_helpers import (
     is_admin,
     is_developer,
+    is_planning,
 )
 from common_lib.auth.config import (
     COOKIE_NAME,
@@ -151,6 +152,28 @@ def is_navigation_developer() -> bool:
 
     return bool(
         is_developer(
+            user
+        )
+    )
+
+
+
+# ============================================================
+# planning
+# ============================================================
+
+def is_navigation_planning() -> bool:
+    # ------------------------------------------------------------
+    # navigation表示用の企画部門判定
+    # ------------------------------------------------------------
+
+    user = get_navigation_current_user()
+
+    if not user:
+        return False
+
+    return bool(
+        is_planning(
             user
         )
     )

@@ -128,6 +128,53 @@ def call_vision_text(
 
     raise InvalidRequestError(f"vision text not supported provider: {provider}")
 
+def call_vision_text_multi(
+    *,
+    provider: Provider,
+    model: str,
+    image_bytes_list: list[bytes],
+    prompt: str,
+    system: Optional[str] = None,
+    max_output_tokens: Optional[int] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> TextResult:
+    if not image_bytes_list:
+        raise InvalidRequestError(
+            "image_bytes_list is empty"
+        )
+
+    if not all(
+        image_bytes_list
+    ):
+        raise InvalidRequestError(
+            "image_bytes_list contains empty image"
+        )
+
+    if not prompt or not str(
+        prompt
+    ).strip():
+        raise InvalidRequestError(
+            "prompt is empty"
+        )
+
+    if provider == "openai":
+        from .tasks.text import (
+            openai_call_vision_text_multi,
+        )
+
+        return openai_call_vision_text_multi(
+            model=model,
+            image_bytes_list=image_bytes_list,
+            prompt=prompt,
+            system=system,
+            max_output_tokens=max_output_tokens,
+            extra=extra,
+        )
+
+    raise InvalidRequestError(
+        f"vision text multi not supported provider: "
+        f"{provider}"
+    )
 
 # ============================================================
 # IMAGE

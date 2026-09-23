@@ -104,6 +104,33 @@ def get_admin_users() -> Set[str]:
 
 
 # ============================================================
+# 企画部門ユーザー
+# ============================================================
+
+@lru_cache(maxsize=1)
+def get_planning_users() -> Set[str]:
+    data = _load_settings()
+
+    try:
+        users = set(
+            data.get(
+                "planning_users",
+                {},
+            ).get(
+                "users",
+                [],
+            )
+        )
+    except Exception:
+        users = set()
+
+    return {
+        str(u).strip()
+        for u in users
+        if str(u).strip()
+    }
+
+# ============================================================
 # 開発者ユーザー
 # ============================================================
 
@@ -259,6 +286,24 @@ def is_admin(user: Optional[str]) -> bool:
     admins_lower = {a.strip().lower() for a in admins}
     return u in admins_lower
 
+def is_planning(user: Optional[str]) -> bool:
+    if not user:
+        return False
+
+    # 開発者は企画部門限定ページも利用可能
+    if is_developer(user):
+        return True
+
+    planning_users = get_planning_users()
+
+    u = user.strip().lower()
+
+    planning_users_lower = {
+        p.strip().lower()
+        for p in planning_users
+    }
+
+    return u in planning_users_lower
 
 def is_developer(user: Optional[str]) -> bool:
     if not user:
@@ -372,6 +417,10 @@ def clear_auth_caches() -> None:
     except Exception:
         pass
     try:
+        get_planning_users.cache_clear()  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    try:
         get_restricted_users.cache_clear()  # type: ignore[attr-defined]
     except Exception:
-        pass   
+        pass
