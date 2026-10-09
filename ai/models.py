@@ -36,16 +36,17 @@ IMAGE_MODEL_CATALOG = [
     ("Gemini / gemini-2.5-flash-image", "gemini:gemini-2.5-flash-image"),
 ]
 
-DEFAULT_IMAGE_MODEL_KEY = "openai:gpt-image-1"
+DEFAULT_IMAGE_MODEL_KEY = "openai:gpt-image-2"
 
 # ============================================================
 # Transcribe 系モデル
 # ============================================================
 TRANSCRIBE_MODELS = [
-    "whisper-1",
-    "gpt-4o-mini-transcribe",
+    "gpt-transcribe",
     "gpt-4o-transcribe",
+    "gpt-4o-mini-transcribe",
     "gpt-4o-transcribe-diarize",
+    "whisper-1",
     "gemini-3.5-flash",
 ]
 

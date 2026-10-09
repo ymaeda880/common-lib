@@ -24,7 +24,10 @@ from typing import Any
 # ============================================================
 # public：PDF白紙ページ判定
 # ============================================================
-def is_effectively_blank_pdf_page(
+# ============================================================
+# public：PDF白紙ページ詳細判定
+# ============================================================
+def inspect_effectively_blank_pdf_page(
     *,
     fitz: Any,
     pdf_bytes: bytes,
@@ -32,15 +35,21 @@ def is_effectively_blank_pdf_page(
     render_dpi: int = 72,
     dark_threshold: int = 245,
     max_dark_pixels: int = 20,
-) -> bool:
+) -> dict[str, Any]:
     # ------------------------------------------------------------
     # PDFの指定ページを低解像度グレースケールで描画し，
-    # 明確に白ではない画素がほぼ存在しなければ白紙と判定する．
+    # 白紙判定と，判定に使用した詳細情報を返す．
     #
-    # 注意：
-    # - OCR用AIには送らない機械判定
-    # - Page 5 / Page 9のような少量文字ページを
-    #   白紙扱いしないよう，非常に厳しい条件にする
+    # dark_pixel_count：
+    # - 画素値が dark_threshold 未満の画素数
+    #
+    # 判定：
+    # - dark_pixel_count <= max_dark_pixels → 白紙
+    # - dark_pixel_count >  max_dark_pixels → 非白紙
+    #
+    # 非白紙の場合は，判定に必要な上限超過を確認した時点で
+    # 走査を終了するため，dark_pixel_count は
+    # max_dark_pixels + 1 となる．
     # ------------------------------------------------------------
     document = fitz.open(
         stream=pdf_bytes,
@@ -81,7 +90,14 @@ def is_effectively_blank_pdf_page(
         samples = pixmap.samples
 
         if not samples:
-            return True
+            return {
+                "is_blank": True,
+                "dark_pixel_count": 0,
+                "dark_pixel_count_exceeded": False,
+                "max_dark_pixels": int(max_dark_pixels),
+                "dark_threshold": int(dark_threshold),
+                "render_dpi": int(render_dpi),
+            }
 
         dark_pixel_count = 0
 
@@ -94,9 +110,53 @@ def is_effectively_blank_pdf_page(
                 if dark_pixel_count > int(
                     max_dark_pixels
                 ):
-                    return False
+                    return {
+                        "is_blank": False,
+                        "dark_pixel_count": dark_pixel_count,
+                        "dark_pixel_count_exceeded": True,
+                        "max_dark_pixels": int(max_dark_pixels),
+                        "dark_threshold": int(dark_threshold),
+                        "render_dpi": int(render_dpi),
+                    }
 
-        return True
+        return {
+            "is_blank": True,
+            "dark_pixel_count": dark_pixel_count,
+            "dark_pixel_count_exceeded": False,
+            "max_dark_pixels": int(max_dark_pixels),
+            "dark_threshold": int(dark_threshold),
+            "render_dpi": int(render_dpi),
+        }
 
     finally:
         document.close()
+
+
+# ============================================================
+# public：PDF白紙ページ判定
+# ============================================================
+def is_effectively_blank_pdf_page(
+    *,
+    fitz: Any,
+    pdf_bytes: bytes,
+    page_no: int,
+    render_dpi: int = 72,
+    dark_threshold: int = 245,
+    max_dark_pixels: int = 20,
+) -> bool:
+    # ------------------------------------------------------------
+    # 既存コードとの互換用．
+    # 詳細判定を実行し，白紙かどうかだけを返す．
+    # ------------------------------------------------------------
+    result = inspect_effectively_blank_pdf_page(
+        fitz=fitz,
+        pdf_bytes=pdf_bytes,
+        page_no=page_no,
+        render_dpi=render_dpi,
+        dark_threshold=dark_threshold,
+        max_dark_pixels=max_dark_pixels,
+    )
+
+    return bool(
+        result["is_blank"]
+    )

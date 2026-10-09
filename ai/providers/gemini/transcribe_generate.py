@@ -60,6 +60,165 @@ def transcribe_audio(
     - 後段の共通SRT処理で解析できる形式へ統一する
     """
 
+
+    # ============================================================
+    # Gemini 3.5 Transcribe：専用API
+    # ============================================================
+
+    if model == "gemini-3.5-transcribe":
+        import os
+        import tempfile
+
+        client = configure_gemini()
+
+        suffix = os.path.splitext(filename)[1] or ".wav"
+        temp_path = None
+
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=suffix,
+                delete=False,
+            ) as temp_file:
+                temp_file.write(audio_bytes)
+                temp_path = temp_file.name
+
+            uploaded = client.files.upload(
+                file=temp_path,
+                config={
+                    "mime_type": mime_type,
+                },
+            )
+
+            interaction = client.interactions.create(
+                model=model,
+                input=[
+                    {
+                        "type": "audio",
+                        "uri": uploaded.uri,
+                        "mime_type": uploaded.mime_type,
+                    },
+                ],
+                generation_config={
+                    "transcription_config": {
+                        "mode": {
+                            "type": "verbatim",
+                            "timestamp_granularities": ["word"],
+                        },
+                    },
+                },
+            )
+
+            # ===== DEBUG START =====
+            # print(
+            #     "GEMINI_TRANSCRIBE_RESPONSE =",
+            #     interaction.model_dump_json(
+            #         indent=2,
+            #         exclude_none=True,
+            #     ),
+            # )
+            # ===== DEBUG END =====
+
+            # ====================================================
+            # Interactions API：単語単位タイムスタンプ取得
+            # ====================================================
+
+            response_data = interaction.model_dump(
+                exclude_none=True,
+            )
+
+            word_items = []
+
+            def collect_word_info(value):
+                if isinstance(value, dict):
+                    if value.get("type") == "word_info":
+                        word_items.append(value)
+                        return
+
+                    for child in value.values():
+                        collect_word_info(child)
+
+                elif isinstance(value, list):
+                    for child in value:
+                        collect_word_info(child)
+
+            collect_word_info(
+                response_data.get("steps", [])
+            )
+
+            def seconds(value):
+                return float(
+                    str(value).removesuffix("s")
+                )
+
+            segments = []
+
+            for item in word_items:
+                word_text = str(
+                    item.get("text", "")
+                )
+
+                if not word_text:
+                    continue
+
+                start = seconds(
+                    item["start_offset"]
+                )
+                end = seconds(
+                    item["end_offset"]
+                )
+
+                segments.append(
+                    {
+                        "start": start,
+                        "end": end,
+                        "text": word_text,
+                        "speaker": None,
+                    }
+                )
+
+            if not segments:
+                raise ProviderError(
+                    "Geminiの単語タイムスタンプが取得できません．",
+                    provider="gemini",
+                )
+
+            result_text = "".join(
+                segment["text"]
+                for segment in segments
+            )
+
+            return TranscribeResult(
+                provider="gemini",
+                model=model,
+                text=result_text,
+                request_id=str(
+                    getattr(interaction, "id", "") or "gemini"
+                ),
+                meta={
+                    "mime_type": mime_type,
+                    "response_format": response_format,
+                },
+                usage=UsageSummary(
+                    input_tokens=None,
+                    output_tokens=None,
+                    total_tokens=None,
+                    raw=None,
+                ),
+                raw={
+                    "segments": segments,
+                },
+            )
+
+        except Exception as e:
+            raise ProviderError(
+                f"Gemini Interactions API failed: {e}",
+                provider="gemini",
+            ) from e
+
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+
     # ============================================================
     # 通常文字起こし
     # - 現在動作しているプロンプトを変更しない

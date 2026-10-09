@@ -31,7 +31,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import hashlib
 import shutil
 from typing import Any, Callable
 
@@ -69,6 +68,11 @@ from common_lib.project_master.report_pages_v2_ops import (
 from common_lib.pdf_tools.text_extract.fitz_guard import (
     try_import_fitz,
 )
+
+from common_lib.pdf_tools.text_extract.utils import (
+    sha256_bytes,
+)
+
 
 # ============================================================
 # constants
@@ -251,32 +255,10 @@ def _is_v2_extracted(
 # ============================================================
 # helpers（PDF直接抽出）
 # ============================================================
-def _sha256_file(
-    pdf_path: Path,
-) -> str:
-    # ------------------------------------------------------------
-    # 大容量PDFをメモリへ一括読込せずSHA256を計算する
-    # ------------------------------------------------------------
-    digest = hashlib.sha256()
-
-    with pdf_path.open("rb") as f:
-        while True:
-            chunk = f.read(
-                1024 * 1024
-            )
-
-            if not chunk:
-                break
-
-            digest.update(
-                chunk
-            )
-
-    return digest.hexdigest()
 
 def _extract_all_pages(
     *,
-    pdf_path: Path,
+    pdf_bytes: bytes,
 ) -> tuple[
     list[dict[str, Any]],
     int,
@@ -298,7 +280,8 @@ def _extract_all_pages(
     fitz = fitz_result.fitz
 
     doc = fitz.open(
-        str(pdf_path)
+        stream=pdf_bytes,
+        filetype="pdf",
     )
 
     try:
@@ -454,8 +437,10 @@ def extract_one_report_v2(
             f" {year}-{pno3}"
         )
 
-    pdf_sha256 = _sha256_file(
-        pdf_path
+    pdf_bytes = pdf_path.read_bytes()
+
+    pdf_sha256 = sha256_bytes(
+        pdf_bytes
     )
 
     # ------------------------------------------------------------
@@ -562,7 +547,7 @@ def extract_one_report_v2(
     # ------------------------------------------------------------
     pages, page_count = (
         _extract_all_pages(
-            pdf_path=pdf_path
+            pdf_bytes=pdf_bytes
         )
     )
 

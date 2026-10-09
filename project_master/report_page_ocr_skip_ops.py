@@ -180,6 +180,7 @@ def mark_report_image_pages_ocr_skip(
     project_no: str,
     page_numbers: list[int],
     done_by: str,
+    source: str = "130",
 ) -> dict[str, Any]:
     # ------------------------------------------------------------
     # 実行時に最新のreport_pages.jsonを再読込する．
@@ -254,6 +255,7 @@ def mark_report_image_pages_ocr_skip(
         page_row["blank_page"] = False
         page_row["ocr_skip"] = True
         page_row["ocr_skip_reason"] = OCR_SKIP_REASON
+        page_row["ocr_skip_source"] = str(source)
 
         processed_pages.append(
             int(page_no)
@@ -358,6 +360,10 @@ def clear_report_image_pages_ocr_skip(
         )
         page_row.pop(
             "ocr_skip_reason",
+            None,
+        )
+        page_row.pop(
+            "ocr_skip_source",
             None,
         )
 
