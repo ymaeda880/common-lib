@@ -109,14 +109,20 @@ def transcribe_audio(
             )
 
             # ===== DEBUG START =====
-            # print(
-            #     "GEMINI_TRANSCRIBE_RESPONSE =",
-            #     interaction.model_dump_json(
-            #         indent=2,
-            #         exclude_none=True,
-            #     ),
+            # response_data_debug = interaction.model_dump(
+            #     exclude_none=True,
             # )
-            # ===== DEBUG END =====
+            # print(
+            #     "GEMINI_TRANSCRIBE_USAGE_DEBUG =",
+            #     {
+            #         key: value
+            #         for key, value in response_data_debug.items()
+            #         if "usage" in key.lower()
+            #         or "token" in key.lower()
+            #         or "billing" in key.lower()
+            #     },
+            # )
+            # # ===== DEBUG END =====
 
             # ====================================================
             # Interactions API：単語単位タイムスタンプ取得
@@ -199,10 +205,19 @@ def transcribe_audio(
                     "response_format": response_format,
                 },
                 usage=UsageSummary(
-                    input_tokens=None,
-                    output_tokens=None,
-                    total_tokens=None,
-                    raw=None,
+                    input_tokens=(
+                        response_data.get("usage", {})
+                        .get("total_input_tokens")
+                    ),
+                    output_tokens=(
+                        response_data.get("usage", {})
+                        .get("total_output_tokens")
+                    ),
+                    total_tokens=(
+                        response_data.get("usage", {})
+                        .get("total_tokens")
+                    ),
+                    raw=response_data.get("usage"),
                 ),
                 raw={
                     "segments": segments,

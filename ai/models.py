@@ -48,6 +48,7 @@ TRANSCRIBE_MODELS = [
     "gpt-4o-transcribe-diarize",
     "whisper-1",
     "gemini-3.5-flash",
+    "gemini-3.5-transcribe",
 ]
 
 

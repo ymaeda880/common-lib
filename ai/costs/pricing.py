@@ -63,6 +63,12 @@ CHAT_PRICES_USD_PER_1M: Dict[str, ChatPricePer1M] = {
         out_usd=9.00,
     ),
 
+    # Gemini 3.5 Transcribe（USD / 1M tokens）
+    "gemini-3.5-transcribe": ChatPricePer1M(
+        in_usd=2.00,
+        out_usd=12.00,
+    ),
+
 }
 
 EMBEDDING_PRICES_USD_PER_1M: Dict[str, float] = {
