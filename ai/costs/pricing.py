@@ -62,6 +62,11 @@ CHAT_PRICES_USD_PER_1M: Dict[str, ChatPricePer1M] = {
         in_usd=1.50,
         out_usd=9.00,
     ),
+    # Gemini 3.6 Flash：標準料金（2026年12月31日まで）
+    "gemini-3.6-flash": ChatPricePer1M(
+        in_usd=0.75,
+        out_usd=3.75,
+    ),
 
     # Gemini 3.5 Transcribe（USD / 1M tokens）
     "gemini-3.5-transcribe": ChatPricePer1M(

@@ -21,6 +21,7 @@ TEXT_MODEL_CATALOG = [
     ("OpenAI / gpt-5-nano", "openai:gpt-5-nano"),
     ("Azure OpenAI / gpt-5-mini", "azure:gpt-5-mini"),
     ("Gemini / gemini-3.5-flash", "gemini:gemini-3.5-flash"),
+    ("Gemini / gemini-3.6-flash", "gemini:gemini-3.6-flash"),
 ]
 
 DEFAULT_TEXT_MODEL_KEY = "openai:gpt-5-mini"
@@ -48,6 +49,7 @@ TRANSCRIBE_MODELS = [
     "gpt-4o-transcribe-diarize",
     "whisper-1",
     "gemini-3.5-flash",
+    "gemini-3.6-flash",
     "gemini-3.5-transcribe",
 ]
 
@@ -64,3 +66,27 @@ EMBED_MODEL_CATALOG = [
 ]
 
 DEFAULT_EMBED_MODEL_KEY = "openai:text-embedding-3-large"
+
+
+# ============================================================
+# タイムスタンプ付き文字起こし：モデル別の応答形式
+# - 対応モデルと応答形式は、この共通定義で管理する
+# - 各ページは、自分が処理できる応答形式を指定して一覧を取得する
+# ============================================================
+TIMESTAMP_TRANSCRIBE_FORMATS = {
+    "whisper-1": "srt",
+    "gpt-4o-transcribe-diarize": "diarized_json",
+    "gemini-3.5-flash": "srt",
+    "gemini-3.6-flash": "srt",
+    "gemini-3.5-transcribe": "json",
+}
+
+
+def get_timestamp_transcribe_models(
+    *, response_formats: tuple[str, ...]
+) -> list[str]:
+    return [
+        model
+        for model in TRANSCRIBE_MODELS
+        if TIMESTAMP_TRANSCRIBE_FORMATS.get(model) in response_formats
+    ]

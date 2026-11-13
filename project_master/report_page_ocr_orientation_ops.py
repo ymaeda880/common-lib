@@ -11,7 +11,7 @@
 # 方針：
 # - 正本は text/report_pages.json
 # - report_pages.json の既存フィールドは変更しない
-# - ocr_rotation_deg フィールドだけを追加・更新する
+# - ocr_rotation_deg フィールドだけを追加・更新・解除する
 # - 保存は report_pages_v2_ops.save_report_pages() を使用する
 # ============================================================
 
@@ -145,7 +145,7 @@ def set_report_image_pages_ocr_rotation(
     *,
     project_year: int,
     project_no: str,
-    rotation_by_page: dict[int, int],
+    rotation_by_page: dict[int, int | None],
 ) -> dict[str, Any]:
     # ------------------------------------------------------------
     # 例：
@@ -154,6 +154,7 @@ def set_report_image_pages_ocr_rotation(
     #     12: 0,
     #     15: 90,
     #     18: 270,
+    #     19: None,  # 「未」：保存済みの方向を解除
     # }
     #
     # 指定されたページだけを更新する．
@@ -179,7 +180,7 @@ def set_report_image_pages_ocr_rotation(
 
     normalized_rotation_by_page: dict[
         int,
-        int,
+        int | None,
     ] = {}
 
     for page_no, rotation_deg in (
@@ -190,9 +191,8 @@ def set_report_image_pages_ocr_rotation(
         )
 
         normalized_rotation_deg = (
-            _normalize_rotation_deg(
-                rotation_deg
-            )
+            None if rotation_deg is None
+            else _normalize_rotation_deg(rotation_deg)
         )
 
         normalized_rotation_by_page[
@@ -218,15 +218,12 @@ def set_report_image_pages_ocr_rotation(
             ),
         )
 
-        rotation_deg = int(
-            normalized_rotation_by_page[
-                page_no
-            ]
-        )
+        rotation_deg = normalized_rotation_by_page[page_no]
 
-        page_row[
-            OCR_ROTATION_FIELD
-        ] = rotation_deg
+        if rotation_deg is None:
+            page_row.pop(OCR_ROTATION_FIELD, None)
+        else:
+            page_row[OCR_ROTATION_FIELD] = rotation_deg
 
         processed_pages.append(
             int(
@@ -249,7 +246,7 @@ def set_report_image_pages_ocr_rotation(
         "status": "ok",
         "processed_pages": processed_pages,
         "rotation_by_page": {
-            int(page_no): int(rotation_deg)
+            int(page_no): rotation_deg
             for page_no, rotation_deg
             in normalized_rotation_by_page.items()
         },
