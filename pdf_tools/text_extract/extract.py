@@ -12,6 +12,7 @@ from __future__ import annotations
 # ============================================================
 # imports（stdlib）
 # ============================================================
+from collections.abc import Callable
 from typing import Any
 
 
@@ -161,6 +162,7 @@ def build_ocr_pdf_bytes(
     page_end_0_inclusive: int,
     ocr_lang: str,
     ocr_dpi: int = 300,
+    prepare_pixmap: Callable[[Any], Any] | None = None,
 ) -> bytes:
     """
     画像PDFから OCR済みPDF（検索可能PDF）の bytes を生成する。
@@ -184,6 +186,8 @@ def build_ocr_pdf_bytes(
             scale = float(ocr_dpi) / 72.0
             matrix = fitz.Matrix(scale, scale)
             pix = page.get_pixmap(matrix=matrix, alpha=False)
+            if prepare_pixmap is not None:
+                pix = prepare_pixmap(pix)
 
             # ----------------------------------------------------
             # guard: OCR PDF API existence

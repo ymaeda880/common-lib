@@ -43,6 +43,12 @@ OCR_ROTATION_FIELD = "ocr_rotation_deg"
 
 OCR_CROP_LEFT_FIELD = "ocr_crop_left_pct"
 OCR_CROP_RIGHT_FIELD = "ocr_crop_right_pct"
+OCR_CROP_FIELDS = {
+    "left": OCR_CROP_LEFT_FIELD,
+    "right": OCR_CROP_RIGHT_FIELD,
+    "top": "ocr_crop_top_pct",
+    "bottom": "ocr_crop_bottom_pct",
+}
 
 VALID_OCR_ROTATIONS = (
     0,
@@ -192,6 +198,29 @@ def _normalize_crop_pct(
         )
 
     return value
+
+def get_contract_ocr_crop(row: dict[str, Any]) -> dict[str, int]:
+    """元のPDF表示を基準にした除外率を読む．未設定の辺は0%．"""
+    crop = {}
+    for side, field in OCR_CROP_FIELDS.items():
+        try:
+            crop[side] = _normalize_crop_pct(row.get(field, 0) or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"PDF Page {row.get('page_no')} の {field} が不正です：{row.get(field)}") from exc
+    return crop
+
+
+def contract_ocr_crop_box(size: tuple[int, int], crop: dict[str, int]) -> tuple[int, int, int, int]:
+    """プレビューと実際の切り抜きで同じ境界を使う．右端・下端は区間に含めない．"""
+    width, height = size
+    left = round(width * crop["left"] / 100)
+    right = width - round(width * crop["right"] / 100)
+    top = round(height * crop["top"] / 100)
+    bottom = height - round(height * crop["bottom"] / 100)
+    if right <= left or bottom <= top:
+        raise ValueError("カット後のOCR画像の幅または高さが0です．")
+    return left, top, right, bottom
+
 
 # ============================================================
 # public：複数image頁のOCR方向を保存
@@ -415,7 +444,7 @@ def set_contract_pages_ocr_rotation(
     }
 
 # ============================================================
-# public：複数image頁のOCR左右端除外率を保存
+# public：複数image頁のOCR端部除外率を保存
 # ============================================================
 
 def set_contract_image_pages_ocr_crop(
@@ -425,17 +454,7 @@ def set_contract_image_pages_ocr_crop(
     project_no: str,
     crop_by_page: dict[int, dict[str, int]],
 ) -> dict[str, Any]:
-    """
-    contract_pages.json のimage頁に，
-    OCR時の左右端除外率を保存する．
-
-    保存フィールド：
-    - ocr_crop_left_pct
-    - ocr_crop_right_pct
-
-    PDF本体，page_kind，OCR状態等は変更しない．
-    """
-
+    """各画像ページのカットを保存する．左右のみを渡す従来の呼び出しでは上下を保持する．"""
     if not crop_by_page:
         return {
             "status": "skip",
@@ -474,39 +493,11 @@ def set_contract_image_pages_ocr_crop(
                 "OCR端部除外設定がdictではありません．"
             )
 
-        crop_left_pct = _normalize_crop_pct(
-            crop_values.get(
-                "left",
-                0,
-            )
-        )
-
-        crop_right_pct = _normalize_crop_pct(
-            crop_values.get(
-                "right",
-                0,
-            )
-        )
-
-        if (
-            crop_left_pct
-            + crop_right_pct
-            >= 100
-        ):
-            raise ValueError(
-                f"PDF Page {normalized_page_no} の"
-                "左右端除外率が不正です．"
-            )
-
-        normalized_crop_by_page[
-            normalized_page_no
-        ] = {
-            "left": int(
-                crop_left_pct
-            ),
-            "right": int(
-                crop_right_pct
-            ),
+        # 左右は旧APIと同じく省略時0．上下は明示時だけ更新し，0の指定で解除する．
+        normalized_crop_by_page[normalized_page_no] = {
+            side: _normalize_crop_pct(crop_values.get(side, 0))
+            for side in OCR_CROP_FIELDS
+            if side in ("left", "right") or side in crop_values
         }
 
     processed_pages: list[int] = []
@@ -528,27 +519,8 @@ def set_contract_image_pages_ocr_crop(
             ),
         )
 
-        crop_values = (
-            normalized_crop_by_page[
-                page_no
-            ]
-        )
-
-        page_row[
-            OCR_CROP_LEFT_FIELD
-        ] = int(
-            crop_values[
-                "left"
-            ]
-        )
-
-        page_row[
-            OCR_CROP_RIGHT_FIELD
-        ] = int(
-            crop_values[
-                "right"
-            ]
-        )
+        for side, value in normalized_crop_by_page[page_no].items():
+            page_row[OCR_CROP_FIELDS[side]] = value
 
         processed_pages.append(
             int(
@@ -574,20 +546,5 @@ def set_contract_image_pages_ocr_crop(
     return {
         "status": "ok",
         "processed_pages": processed_pages,
-        "crop_by_page": {
-            int(page_no): {
-                "left": int(
-                    crop_values[
-                        "left"
-                    ]
-                ),
-                "right": int(
-                    crop_values[
-                        "right"
-                    ]
-                ),
-            }
-            for page_no, crop_values
-            in normalized_crop_by_page.items()
-        },
+        "crop_by_page": normalized_crop_by_page,
     }

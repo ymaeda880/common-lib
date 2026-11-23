@@ -41,7 +41,6 @@ def render_run_summary_compact(
         raise RuntimeError("render_run_summary_compact は Streamlit 環境でのみ利用できます") from e
 
     from common_lib.busy import get_run
-    from common_lib.ui.time_format import format_jst_iso_ja
 
     rid = str(run_id or "").strip()
     if not rid:
@@ -56,6 +55,20 @@ def render_run_summary_compact(
             st.divider()
         st.caption(f"ai_runs.db に run が見つかりません（run_id: {rid}）")
         return
+
+    render_text_run_summary_fields(
+        row=row, model=model, in_tokens=in_tokens, out_tokens=out_tokens,
+        cost=cost, reference=f"run_id {rid}", note=note, show_divider=show_divider,
+    )
+
+
+def render_text_run_summary_fields(
+    *, row: dict, model: str, in_tokens: Optional[int], out_tokens: Optional[int],
+    cost: Any, reference: str, note: str = "", show_divider: bool = True,
+) -> None:
+    """単一のAI呼出しと、複数の呼出しから成る操作で同じ表示を使う。"""
+    import streamlit as st
+    from common_lib.ui.time_format import format_jst_iso_ja
 
     if show_divider:
         st.divider()
@@ -139,9 +152,9 @@ def render_run_summary_compact(
    
     n = (note or "").strip()
     if n:
-        st.caption(f"run_id {rid}　　note: {n}")
+        st.caption(f"{reference}　　note: {n}")
     else:
-        st.caption(f"run_id {rid}")
+        st.caption(reference)
 
 
    
